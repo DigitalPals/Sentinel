@@ -133,7 +133,7 @@ export default function Proxmox({ snap }: { snap: Snapshot }) {
                 <>
                   <div
                     className="guest-row"
-                    style={{ background: "var(--bg)", padding: "8px 18px 8px 28px", cursor: "default" }}
+                    style={{ background: "var(--bg)", padding: "8px 28px", cursor: "default" }}
                   >
                     <div className="col-h" />
                     <div className="col-h">Guest</div>

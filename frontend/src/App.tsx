@@ -17,27 +17,47 @@ const PAGES: Record<string, { crumb: string; title: string }> = {
   logs: { crumb: "Operations / Events & Logs", title: "Events & Logs" },
 };
 
+/** Resolve the active page from the URL path, with legacy #hash fallback. */
+function resolvePage(): string {
+  const path = location.pathname.replace(/^\/+|\/+$/g, "");
+  if (PAGES[path]) return path;
+  const hash = location.hash.replace(/^#/, "");
+  if (PAGES[hash]) return hash;
+  return "dashboard";
+}
+
+const pathForPage = (p: string): string => (p === "dashboard" ? "/" : "/" + p);
+
 export default function App() {
   const { snap, ready, error, staleSec, refresh } = useSnapshot();
   const { settings, setSetting } = useSettings();
-  const [page, setPage] = React.useState<string>(() => {
-    const h = (location.hash || "").replace("#", "");
-    return PAGES[h] ? h : "dashboard";
-  });
+  const [page, setPageState] = React.useState<string>(resolvePage);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
 
-  React.useEffect(() => {
-    location.hash = page;
-  }, [page]);
-
-  React.useEffect(() => {
-    const onHash = () => {
-      const h = (location.hash || "").replace("#", "");
-      if (PAGES[h]) setPage(h);
-    };
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+  const navigate = React.useCallback((p: string) => {
+    if (location.pathname !== pathForPage(p)) {
+      window.history.pushState({}, "", pathForPage(p));
+    }
+    setPageState(p);
+    window.scrollTo(0, 0);
   }, []);
+
+  // Path-based routing: react to back/forward, and migrate legacy #hash URLs.
+  React.useEffect(() => {
+    const current = location.pathname.replace(/^\/+|\/+$/g, "");
+    if (!PAGES[current]) {
+      const hash = location.hash.replace(/^#/, "");
+      if (PAGES[hash]) window.history.replaceState({}, "", pathForPage(hash));
+    }
+    const onPop = () => setPageState(resolvePage());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // Keep the document title in sync with the active page.
+  React.useEffect(() => {
+    document.title = PAGES[page] ? `Cybex Sentinel · ${PAGES[page].title}` : "Cybex Sentinel";
+  }, [page]);
 
   // Reveal scrollbars only while the user is actively scrolling.
   React.useEffect(() => {
@@ -99,7 +119,7 @@ export default function App() {
     <div className={"app density-" + settings.density + (settings.showSpark ? "" : " no-spark")}>
       <Sidebar
         page={page}
-        onNavigate={setPage}
+        onNavigate={navigate}
         onSettings={() => setSettingsOpen(true)}
         alertCount={alertCount}
       />
@@ -113,7 +133,7 @@ export default function App() {
           alertCount={alertCount}
           onRefresh={refresh}
           onSettings={() => setSettingsOpen(true)}
-          onAlerts={() => setPage("alerts")}
+          onAlerts={() => navigate("alerts")}
         />
         {stale && (
           <div style={{ padding: "16px 28px 0" }}>
