@@ -1,0 +1,273 @@
+//! Output model — the JSON contract served to the frontend.
+//!
+//! Every numeric KPI is pre-formatted server-side into a [`Kpi`] so the
+//! frontend only renders strings; pages still receive structured lists
+//! (nodes, guests, devices, alerts, events) for tables and detail panels.
+
+use serde::Serialize;
+
+/// One pre-formatted KPI tile.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Kpi {
+    /// Primary value, ready to print (e.g. `"99.98"`, `"1.84"`, `"45"`).
+    pub display: String,
+    /// Unit suffix shown next to the value (e.g. `"%"`, `"Gbps"`, `"/47"`).
+    pub unit: String,
+    /// Secondary descriptive line.
+    pub sub: String,
+    /// Signed trend; the frontend hides the indicator when this is `0`.
+    pub trend: f64,
+    /// Recent values for the inline sparkline.
+    pub spark: Vec<f64>,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceHealth {
+    pub name: String,
+    pub kind: String,
+    pub ok: bool,
+    pub detail: String,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GuestCount {
+    pub vm: u32,
+    pub lxc: u32,
+}
+
+/// A Proxmox node tile (dashboard + Proxmox page section headers).
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeTile {
+    pub name: String,
+    pub server: String,
+    pub host: String,
+    pub status: String,
+    pub cpu: u32,
+    pub mem: u32,
+    pub disk: u32,
+    pub net: u32,
+    pub net_mbps: f64,
+    pub guests: GuestCount,
+    pub model: String,
+    pub uptime: String,
+}
+
+/// A Proxmox guest (VM or LXC container).
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Guest {
+    pub id: u64,
+    pub kind: String,
+    pub name: String,
+    pub status: String,
+    pub cpu: u32,
+    pub mem: u32,
+    pub disk: u32,
+    pub net: u32,
+    pub uptime: String,
+    pub tags: String,
+    pub cores: u32,
+    pub ram: String,
+    pub node: String,
+    pub server: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeGuests {
+    pub node: String,
+    pub server: String,
+    pub guests: Vec<Guest>,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Issue {
+    pub sev: String,
+    pub title: String,
+    pub source: String,
+    pub time: String,
+}
+
+/// 24h bandwidth time-series for the dashboard chart.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BandwidthSeries {
+    pub down: Vec<f64>,
+    pub up: Vec<f64>,
+    pub points: usize,
+    pub window_label: String,
+    pub peak_down: f64,
+    pub peak_up: f64,
+    pub avg: f64,
+    pub transferred_gb: f64,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TopoCounts {
+    pub router: u32,
+    pub sw: u32,
+    pub ap: u32,
+    pub ok: u32,
+    pub warn: u32,
+    pub crit: u32,
+    pub total: u32,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TopoNode {
+    pub kind: String,
+    pub id: String,
+    pub name: String,
+    pub model: String,
+    pub ip: String,
+    pub status: String,
+    pub clients: u32,
+    pub ports: String,
+    pub wan: String,
+    pub children: Vec<TopoNode>,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Dashboard {
+    pub kpis: Vec<Kpi>,
+    pub issues: Vec<Issue>,
+    pub bandwidth: BandwidthSeries,
+    pub nodes: Vec<NodeTile>,
+    pub topology_counts: TopoCounts,
+    pub total_guests: u32,
+    pub quorum: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxmoxView {
+    pub kpis: Vec<Kpi>,
+    pub nodes: Vec<NodeTile>,
+    pub guests: Vec<NodeGuests>,
+    pub high_cpu: u32,
+    pub high_mem: u32,
+    pub running: u32,
+    pub stopped: u32,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PortOut {
+    pub idx: u32,
+    pub up: bool,
+    pub poe: bool,
+    pub speed_mbps: u32,
+    pub connector: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RadioOut {
+    pub band: String,
+    pub channel: u32,
+    pub width: u32,
+    pub standard: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UniDeviceOut {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub model: String,
+    pub ip: String,
+    pub mac: String,
+    pub status: String,
+    pub uptime: String,
+    pub clients: u32,
+    pub tx_mbps: f64,
+    pub rx_mbps: f64,
+    pub fw: String,
+    pub site: String,
+    pub cpu: u32,
+    pub mem: u32,
+    pub firmware_updatable: bool,
+    pub ports: Vec<PortOut>,
+    pub radios: Vec<RadioOut>,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UnifiView {
+    pub kpis: Vec<Kpi>,
+    pub devices: Vec<UniDeviceOut>,
+    pub poe_active: u32,
+    pub poe_capable: u32,
+    pub wireless_clients: u32,
+    pub wired_clients: u32,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Alert {
+    pub id: String,
+    pub sev: String,
+    pub status: String,
+    pub title: String,
+    pub desc: String,
+    pub source: String,
+    pub host: String,
+    pub target: String,
+    pub age_min: i64,
+    pub occurrences: u32,
+    pub assignee: Option<String>,
+    pub rule: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AlertsView {
+    pub kpis: Vec<Kpi>,
+    pub alerts: Vec<Alert>,
+    pub histogram: Vec<u32>,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Event {
+    pub ts: String,
+    pub time: String,
+    pub level: String,
+    pub source: String,
+    pub source_kind: String,
+    pub target: String,
+    pub msg: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EventsView {
+    pub kpis: Vec<Kpi>,
+    pub events: Vec<Event>,
+    pub rate: Vec<u32>,
+}
+
+/// The complete snapshot served at `/api/snapshot`.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub generated_at: String,
+    pub poll_interval_sec: u64,
+    pub sources: Vec<SourceHealth>,
+    pub dashboard: Dashboard,
+    pub proxmox: ProxmoxView,
+    pub unifi: UnifiView,
+    pub topology: TopoNode,
+    pub alerts: AlertsView,
+    pub events: EventsView,
+}
