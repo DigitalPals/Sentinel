@@ -2,7 +2,4 @@ backend/target/
 frontend/node_modules/
 frontend/dist/
 .env
-design/
-design.tar
-design_raw.bin
 *.log
