@@ -39,11 +39,11 @@ export default function Dashboard({ snap }: { snap: Snapshot }) {
           actions={
             <div className="chart-legend">
               <span>
-                <span className="sw" style={{ background: "oklch(0.82 0.15 200)" }} />
+                <span className="sw" style={{ background: "var(--accent)" }} />
                 Download
               </span>
               <span>
-                <span className="sw" style={{ background: "oklch(0.66 0.18 270)" }} />
+                <span className="sw" style={{ background: "var(--accent-2)" }} />
                 Upload
               </span>
             </div>

@@ -129,9 +129,9 @@ export default function Unifi({ snap }: { snap: Snapshot }) {
                         <span className="muted">—</span>
                       ) : (
                         <>
-                          <span style={{ color: "oklch(0.82 0.15 200)" }}>↓ {fmtMbps(d.rxMbps)}</span>
+                          <span style={{ color: "var(--accent)" }}>↓ {fmtMbps(d.rxMbps)}</span>
                           {" · "}
-                          <span style={{ color: "oklch(0.66 0.18 270)" }}>↑ {fmtMbps(d.txMbps)}</span>
+                          <span style={{ color: "var(--accent-2)" }}>↑ {fmtMbps(d.txMbps)}</span>
                         </>
                       )}
                     </td>

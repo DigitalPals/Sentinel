@@ -410,7 +410,7 @@ const KPI_COLORS = [
   "oklch(0.76 0.16 152)",
   "oklch(0.78 0.13 232)",
   "oklch(0.7 0.21 26)",
-  "oklch(0.82 0.15 200)",
+  "var(--accent)",
 ];
 
 export function KpiGrid({ kpis, labels }: { kpis: Kpi[]; labels: string[] }) {
@@ -502,12 +502,12 @@ export function BandwidthChart({
     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
       <defs>
         <linearGradient id="bw-down" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="oklch(0.82 0.15 200)" stopOpacity="0.45" />
-          <stop offset="100%" stopColor="oklch(0.82 0.15 200)" stopOpacity="0" />
+          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.45" />
+          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
         </linearGradient>
         <linearGradient id="bw-up" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="oklch(0.66 0.18 270)" stopOpacity="0.38" />
-          <stop offset="100%" stopColor="oklch(0.66 0.18 270)" stopOpacity="0" />
+          <stop offset="0%" stopColor="var(--accent-2)" stopOpacity="0.38" />
+          <stop offset="100%" stopColor="var(--accent-2)" stopOpacity="0" />
         </linearGradient>
       </defs>
       {gridY.map((v, i) => (
@@ -528,8 +528,8 @@ export function BandwidthChart({
       ))}
       <path d={areaFor(down)} fill="url(#bw-down)" />
       <path d={areaFor(up)} fill="url(#bw-up)" />
-      <path d={pathFor(down)} fill="none" stroke="oklch(0.82 0.15 200)" strokeWidth="1.6" strokeLinejoin="round" />
-      <path d={pathFor(up)} fill="none" stroke="oklch(0.66 0.18 270)" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d={pathFor(down)} fill="none" stroke="var(--accent)" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d={pathFor(up)} fill="none" stroke="var(--accent-2)" strokeWidth="1.6" strokeLinejoin="round" />
       <line
         x1={xAt(n - 1)}
         x2={xAt(n - 1)}
@@ -540,8 +540,8 @@ export function BandwidthChart({
         strokeDasharray="2 3"
         opacity="0.5"
       />
-      <circle cx={xAt(n - 1)} cy={yAt(down[n - 1])} r="3.5" fill="oklch(0.82 0.15 200)" stroke="var(--bg)" strokeWidth="1.5" />
-      <circle cx={xAt(n - 1)} cy={yAt(up[n - 1])} r="3.5" fill="oklch(0.66 0.18 270)" stroke="var(--bg)" strokeWidth="1.5" />
+      <circle cx={xAt(n - 1)} cy={yAt(down[n - 1])} r="3.5" fill="var(--accent)" stroke="var(--bg)" strokeWidth="1.5" />
+      <circle cx={xAt(n - 1)} cy={yAt(up[n - 1])} r="3.5" fill="var(--accent-2)" stroke="var(--bg)" strokeWidth="1.5" />
     </svg>
   );
 }
