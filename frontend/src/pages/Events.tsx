@@ -74,7 +74,7 @@ export default function Events({ snap }: { snap: Snapshot }) {
               justifyContent: "space-between",
               marginTop: 8,
               fontFamily: "var(--mono)",
-              fontSize: 9.5,
+              fontSize: 10.5,
               color: "var(--fg-3)",
               letterSpacing: ".08em",
             }}

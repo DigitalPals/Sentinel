@@ -1,7 +1,7 @@
 // Cybex Sentinel — Alerts.
 import React from "react";
 import { alertAction, type Alert, type Snapshot } from "../api";
-import { Card, Chip, KpiGrid } from "../components";
+import { Card, Chip, Icon, KpiGrid } from "../components";
 
 const KPI_LABELS = ["Open Alerts", "Acknowledged", "Resolved", "Tracked Conditions"];
 
@@ -65,7 +65,7 @@ export default function Alerts({ snap, refresh }: { snap: Snapshot; refresh: () 
                 <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
                   <div style={{ width: "100%", height: h, background: tone, opacity: v === 0 ? 0.4 : 1, borderRadius: 2 }} />
                   {i % 3 === 0 && (
-                    <div style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--fg-3)" }}>
+                    <div style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--fg-3)" }}>
                       {String(i).padStart(2, "0")}
                     </div>
                   )}
@@ -75,13 +75,13 @@ export default function Alerts({ snap, refresh }: { snap: Snapshot; refresh: () 
           </div>
           <div style={{ display: "flex", gap: 16 }}>
             <div>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 9.5, color: "var(--fg-3)", textTransform: "uppercase", letterSpacing: ".1em" }}>
+              <div style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--fg-3)", textTransform: "uppercase", letterSpacing: ".1em" }}>
                 24h total
               </div>
               <div style={{ fontFamily: "var(--mono)", fontSize: 18, marginTop: 4 }}>{hist.reduce((a, b) => a + b, 0)}</div>
             </div>
             <div>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 9.5, color: "var(--fg-3)", textTransform: "uppercase", letterSpacing: ".1em" }}>
+              <div style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--fg-3)", textTransform: "uppercase", letterSpacing: ".1em" }}>
                 Tracked
               </div>
               <div style={{ fontFamily: "var(--mono)", fontSize: 18, marginTop: 4 }}>{counts.all}</div>
@@ -133,7 +133,9 @@ export default function Alerts({ snap, refresh }: { snap: Snapshot; refresh: () 
                 onClick={() => setSelectedId(a.id)}
                 className={"alert-row" + (sel && a.id === sel.id ? " selected" : "")}
               >
-                <div className={"alert-sev " + a.sev}>{a.sev === "info" ? "i" : "!"}</div>
+                <div className={"alert-sev " + a.sev}>
+                  <Icon name={a.sev === "info" ? "info" : "alert"} />
+                </div>
                 <div className="alert-body">
                   <div className="alert-hd">
                     <span className="alert-title">{a.title}</span>

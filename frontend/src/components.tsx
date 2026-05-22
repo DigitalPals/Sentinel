@@ -34,6 +34,12 @@ const ICONS: Record<string, React.ReactElement> = {
       <path d="M8 6.5v3.5M8 12v.01" strokeLinecap="round" />
     </svg>
   ),
+  info: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 7.3v3.4M8 5.1v.01" strokeLinecap="round" />
+    </svg>
+  ),
   logs: (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
       <rect x="2.5" y="2" width="11" height="12" rx="1" />
@@ -363,6 +369,7 @@ export function Sparkline({
   area?: boolean;
   strokeWidth?: number;
 }) {
+  const uid = React.useId();
   if (!data || !data.length) return null;
   const min = Math.min(...data);
   const max = Math.max(...data);
@@ -374,7 +381,7 @@ export function Sparkline({
   });
   const d = pts.map(([x, y], i) => (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1)).join(" ");
   const areaD = d + ` L${width - 1} ${height - 1} L1 ${height - 1} Z`;
-  const id = "sg-" + Math.random().toString(36).slice(2, 8);
+  const id = "sg" + uid.replace(/[^a-zA-Z0-9]/g, "");
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
       {area && (
@@ -493,22 +500,26 @@ export function MiniBar({ value, max = 100, tone }: { value: number; max?: numbe
   );
 }
 
-// ── Bandwidth chart (dual area) ─────────────────────────────
+// ── Bandwidth chart (dual area, interactive) ────────────────
 export function BandwidthChart({
   down,
   up,
+  windowLabel,
   height = 220,
 }: {
   down: number[];
   up: number[];
+  windowLabel?: string;
   height?: number;
 }) {
+  const uid = React.useId().replace(/[^a-zA-Z0-9]/g, "");
+  const [hover, setHover] = React.useState<number | null>(null);
   const W = 760;
   const H = height;
   const padL = 40;
   const padR = 8;
   const padT = 12;
-  const padB = 22;
+  const padB = 30;
   const n = down.length;
   const allMax = Math.max(...down, ...up, 1);
   const yMax = niceMax(allMax);
@@ -519,51 +530,139 @@ export function BandwidthChart({
   const areaFor = (arr: number[]) =>
     pathFor(arr) + ` L${xAt(n - 1).toFixed(1)} ${H - padB} L${padL} ${H - padB} Z`;
   const gridY = [0, 0.25, 0.5, 0.75, 1].map((p) => yMax - p * yMax);
+  const xTicks = [0, 0.25, 0.5, 0.75, 1];
+  const windowMin = parseWindowMinutes(windowLabel);
+
+  /** Label for a fraction (0 = window start, 1 = now) of the time axis. */
+  const labelAt = (frac: number): string => {
+    if (frac >= 0.999) return "now";
+    if (windowMin == null) return frac <= 0.001 ? windowLabel ?? "" : "";
+    const ago = windowMin * (1 - frac);
+    if (ago < 60) return `-${Math.round(ago)}m`;
+    const h = ago / 60;
+    return `-${Number.isInteger(h) ? h : h.toFixed(1)}h`;
+  };
+
+  // Map the pointer's client X onto the nearest sample index.
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    if (!r.width || n < 2) return;
+    const frac = (((e.clientX - r.left) / r.width) * W - padL) / (W - padL - padR);
+    setHover(Math.max(0, Math.min(n - 1, Math.round(frac * (n - 1)))));
+  };
+
+  const tipWhen = hover != null ? labelAt(hover / (n - 1)) : "";
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="bw-down" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.45" />
-          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
-        </linearGradient>
-        <linearGradient id="bw-up" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="var(--accent-2)" stopOpacity="0.38" />
-          <stop offset="100%" stopColor="var(--accent-2)" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      {gridY.map((v, i) => (
-        <g key={i}>
-          <line
-            x1={padL}
-            x2={W - padR}
-            y1={yAt(v)}
-            y2={yAt(v)}
-            stroke="var(--line)"
-            strokeWidth="1"
-            strokeDasharray={i === 4 ? "0" : "2 4"}
-          />
-          <text x={padL - 6} y={yAt(v) + 3} fontSize="9.5" textAnchor="end" fill="var(--fg-3)" fontFamily="var(--mono)">
-            {fmtAxis(v)}
-          </text>
-        </g>
-      ))}
-      <path d={areaFor(down)} fill="url(#bw-down)" />
-      <path d={areaFor(up)} fill="url(#bw-up)" />
-      <path d={pathFor(down)} fill="none" stroke="var(--accent)" strokeWidth="1.6" strokeLinejoin="round" />
-      <path d={pathFor(up)} fill="none" stroke="var(--accent-2)" strokeWidth="1.6" strokeLinejoin="round" />
-      <line
-        x1={xAt(n - 1)}
-        x2={xAt(n - 1)}
-        y1={padT}
-        y2={H - padB}
-        stroke="var(--accent)"
-        strokeWidth="1"
-        strokeDasharray="2 3"
-        opacity="0.5"
-      />
-      <circle cx={xAt(n - 1)} cy={yAt(down[n - 1])} r="3.5" fill="var(--accent)" stroke="var(--bg)" strokeWidth="1.5" />
-      <circle cx={xAt(n - 1)} cy={yAt(up[n - 1])} r="3.5" fill="var(--accent-2)" stroke="var(--bg)" strokeWidth="1.5" />
-    </svg>
+    <div className="bw-chart">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        onMouseMove={onMove}
+        onMouseLeave={() => setHover(null)}
+      >
+        <defs>
+          <linearGradient id={`bwd-${uid}`} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.45" />
+            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id={`bwu-${uid}`} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="var(--accent-2)" stopOpacity="0.38" />
+            <stop offset="100%" stopColor="var(--accent-2)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* horizontal grid + throughput axis */}
+        {gridY.map((v, i) => (
+          <g key={"y" + i}>
+            <line
+              x1={padL}
+              x2={W - padR}
+              y1={yAt(v)}
+              y2={yAt(v)}
+              stroke="var(--line)"
+              strokeWidth="1"
+              strokeDasharray={i === 4 ? "0" : "2 4"}
+            />
+            <text x={padL - 6} y={yAt(v) + 3} fontSize="10" textAnchor="end" fill="var(--fg-3)" fontFamily="var(--mono)">
+              {fmtAxis(v)}
+            </text>
+          </g>
+        ))}
+
+        {/* vertical grid + time axis */}
+        {xTicks.map((f, i) => {
+          const x = padL + f * (W - padL - padR);
+          return (
+            <g key={"x" + i}>
+              <line
+                x1={x}
+                x2={x}
+                y1={padT}
+                y2={H - padB}
+                stroke="var(--line)"
+                strokeWidth="1"
+                strokeDasharray="2 4"
+                opacity="0.45"
+              />
+              <text
+                x={x}
+                y={H - padB + 16}
+                fontSize="10"
+                textAnchor={i === 0 ? "start" : i === xTicks.length - 1 ? "end" : "middle"}
+                fill="var(--fg-3)"
+                fontFamily="var(--mono)"
+              >
+                {labelAt(f)}
+              </text>
+            </g>
+          );
+        })}
+
+        <path d={areaFor(down)} fill={`url(#bwd-${uid})`} />
+        <path d={areaFor(up)} fill={`url(#bwu-${uid})`} />
+        <path d={pathFor(down)} fill="none" stroke="var(--accent)" strokeWidth="1.6" strokeLinejoin="round" />
+        <path d={pathFor(up)} fill="none" stroke="var(--accent-2)" strokeWidth="1.6" strokeLinejoin="round" />
+
+        {hover == null ? (
+          <>
+            <line
+              x1={xAt(n - 1)}
+              x2={xAt(n - 1)}
+              y1={padT}
+              y2={H - padB}
+              stroke="var(--accent)"
+              strokeWidth="1"
+              strokeDasharray="2 3"
+              opacity="0.5"
+            />
+            <circle cx={xAt(n - 1)} cy={yAt(down[n - 1])} r="3.5" fill="var(--accent)" stroke="var(--bg)" strokeWidth="1.5" />
+            <circle cx={xAt(n - 1)} cy={yAt(up[n - 1])} r="3.5" fill="var(--accent-2)" stroke="var(--bg)" strokeWidth="1.5" />
+          </>
+        ) : (
+          <>
+            <line x1={xAt(hover)} x2={xAt(hover)} y1={padT} y2={H - padB} stroke="var(--fg-2)" strokeWidth="1" />
+            <circle cx={xAt(hover)} cy={yAt(down[hover])} r="4" fill="var(--accent)" stroke="var(--bg)" strokeWidth="1.5" />
+            <circle cx={xAt(hover)} cy={yAt(up[hover])} r="4" fill="var(--accent-2)" stroke="var(--bg)" strokeWidth="1.5" />
+          </>
+        )}
+      </svg>
+
+      {hover != null && (
+        <div
+          className="bw-tip"
+          style={{ left: `${Math.min(92, Math.max(8, (xAt(hover) / W) * 100))}%` }}
+        >
+          {tipWhen && <div className="bw-tip-when">{tipWhen}</div>}
+          <div className="bw-tip-row">
+            <span className="bw-tip-sw" style={{ background: "var(--accent)" }} />↓ {fmtMbps(down[hover])}
+          </div>
+          <div className="bw-tip-row">
+            <span className="bw-tip-sw" style={{ background: "var(--accent-2)" }} />↑ {fmtMbps(up[hover])}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -577,6 +676,16 @@ function niceMax(v: number): number {
 function fmtAxis(v: number): string {
   if (v >= 1000) return (v / 1000).toFixed(1) + "G";
   return String(Math.round(v));
+}
+
+/** Best-effort parse of a "last 24h" / "last 3h 12m" / "last 5m" window
+ *  label into total minutes — drives the bandwidth chart's time axis. */
+function parseWindowMinutes(label?: string): number | null {
+  if (!label) return null;
+  const h = label.match(/(\d+)\s*h/);
+  const m = label.match(/(\d+)\s*m/);
+  if (!h && !m) return null;
+  return (h ? parseInt(h[1], 10) * 60 : 0) + (m ? parseInt(m[1], 10) : 0);
 }
 
 // ── Throughput formatter ────────────────────────────────────

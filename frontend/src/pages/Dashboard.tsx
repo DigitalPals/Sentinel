@@ -1,7 +1,7 @@
 // Cybex Sentinel — Operations Dashboard.
 import React from "react";
 import type { Snapshot } from "../api";
-import { Bar, BandwidthChart, Card, Chip, KpiGrid, MiniBar, Sparkline, StatusDot, fmtMbps } from "../components";
+import { Bar, BandwidthChart, Card, Chip, Icon, KpiGrid, MiniBar, StatusDot, fmtMbps } from "../components";
 import { TopologyCard, TopologyModal } from "../topology";
 
 const KPI_LABELS = ["Fleet Availability", "UniFi Devices Online", "Active Alerts", "WAN Throughput"];
@@ -11,8 +11,6 @@ function fmtData(gb: number): { value: string; unit: string } {
   if (gb >= 1) return { value: gb.toFixed(1), unit: "GB" };
   return { value: (gb * 1000).toFixed(0), unit: "MB" };
 }
-
-const issueGlyph = (sev: string) => (sev === "info" ? "i" : "!");
 
 export default function Dashboard({ snap }: { snap: Snapshot }) {
   const d = snap.dashboard;
@@ -52,7 +50,7 @@ export default function Dashboard({ snap }: { snap: Snapshot }) {
         >
           {bw.points >= 2 ? (
             <div className="chart-wrap">
-              <BandwidthChart down={bw.down} up={bw.up} />
+              <BandwidthChart down={bw.down} up={bw.up} windowLabel={bw.windowLabel} />
             </div>
           ) : (
             <div className="chart-empty">Collecting WAN throughput history…</div>
@@ -92,7 +90,9 @@ export default function Dashboard({ snap }: { snap: Snapshot }) {
           {d.issues.length === 0 && <div className="empty-row">No active issues — all systems nominal.</div>}
           {d.issues.map((it, i) => (
             <div className="issue" key={i}>
-              <div className={"issue-icon " + it.sev}>{issueGlyph(it.sev)}</div>
+              <div className={"issue-icon " + it.sev}>
+                <Icon name={it.sev === "info" ? "info" : "alert"} />
+              </div>
               <div>
                 <div className="issue-title">{it.title}</div>
                 <div className="issue-meta">{it.source}</div>
