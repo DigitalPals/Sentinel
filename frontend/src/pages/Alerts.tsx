@@ -125,7 +125,7 @@ export default function Alerts({ snap, refresh }: { snap: Snapshot; refresh: () 
             </select>
           </div>
 
-          <div style={{ maxHeight: "calc(100vh - 460px)", minHeight: 320, overflow: "auto" }}>
+          <div className="scroll-area" style={{ maxHeight: "calc(100vh - 460px)", minHeight: 320 }}>
             {filtered.length === 0 && <div className="empty-row" style={{ padding: 36 }}>No alerts match the current filters.</div>}
             {filtered.map((a) => (
               <div

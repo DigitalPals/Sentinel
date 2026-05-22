@@ -120,7 +120,14 @@ export default function Dashboard({ snap }: { snap: Snapshot }) {
         {d.nodes.length === 0 ? (
           <div className="empty-row">No Proxmox nodes reachable.</div>
         ) : (
-          <div className="node-grid">
+          <div
+            className="node-grid"
+            style={
+              d.nodes.length > 0 && d.nodes.length <= 4
+                ? { gridTemplateColumns: `repeat(${d.nodes.length}, 1fr)` }
+                : undefined
+            }
+          >
             {d.nodes.map((n) => (
               <div className="node-tile" key={n.server + n.name}>
                 <div className="node-tile-hd">

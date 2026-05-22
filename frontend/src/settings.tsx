@@ -50,10 +50,8 @@ export function useSettings() {
     root.setProperty("--accent-soft", a.accent.replace(")", " / 0.14)"));
   }, [settings.accent]);
 
-  useEffect(() => {
-    const fs = settings.density === "compact" ? 12.5 : settings.density === "comfy" ? 13.5 : 13;
-    document.body.style.fontSize = `${fs}px`;
-  }, [settings.density]);
+  // Density is applied as a class on the app shell (see App.tsx); it scales
+  // padding and gaps, which the pixel-sized design would otherwise ignore.
 
   return { settings, setSetting };
 }
@@ -67,6 +65,12 @@ export function SettingsPanel({
   setSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
   onClose: () => void;
 }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
     <>
       <div className="settings-backdrop" onClick={onClose} />

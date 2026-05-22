@@ -75,7 +75,7 @@ export default function Unifi({ snap }: { snap: Snapshot }) {
             </div>
           </div>
 
-          <div style={{ maxHeight: "calc(100vh - 320px)", overflow: "auto" }}>
+          <div className="scroll-area" style={{ maxHeight: "calc(100vh - 320px)" }}>
             <table className="tbl">
               <thead>
                 <tr>

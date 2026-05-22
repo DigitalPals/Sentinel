@@ -557,7 +557,8 @@ button.chip:hover { background: var(--surf-2); color: var(--fg); }
 }
 .node-tile-bars {
   display: grid;
-  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 18px;
   margin-top: 4px;
 }
 
@@ -1012,14 +1013,6 @@ button.chip:hover { background: var(--surf-2); color: var(--fg); }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--line-2) transparent;
-}
-.modal-body::-webkit-scrollbar { width: 10px; }
-.modal-body::-webkit-scrollbar-thumb {
-  background: var(--line-2);
-  border: 2px solid var(--surf);
-  border-radius: 6px;
 }
 .modal-foot {
   padding: 12px 22px;
@@ -1249,14 +1242,6 @@ hr.div { border: 0; border-top: 1px solid var(--line); margin: 0; }
   max-height: calc(100vh - 460px);
   min-height: 320px;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--line-2) transparent;
-}
-.log-body::-webkit-scrollbar { width: 10px; }
-.log-body::-webkit-scrollbar-thumb {
-  background: var(--line-2);
-  border: 2px solid var(--bg-1);
-  border-radius: 6px;
 }
 .log-row {
   display: flex;
@@ -1517,3 +1502,98 @@ hr.div { border: 0; border-top: 1px solid var(--line); margin: 0; }
 }
 .port-cell.up span { color: var(--ok); }
 .port-cell.poe span { color: var(--warn); }
+
+/* ════════════════════════════════════════════════════════════════
+ * Scrollbars — thin, auto-hiding, layout-stable
+ * The gutter is always reserved (scrollbar-gutter: stable) so content
+ * never reflows when a scrollbar appears or disappears. The thumb is
+ * invisible at rest and is revealed while scrolling or on hover.
+ * ════════════════════════════════════════════════════════════════ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+html {
+  scrollbar-gutter: stable;
+  overflow-y: auto;
+}
+.scroll-area,
+.modal-body,
+.log-body {
+  scrollbar-gutter: stable;
+}
+
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  min-height: 40px;
+  transition: background-color .2s ease;
+}
+
+/* Reveal while the page is actively being scrolled (toggled from JS). */
+html.is-scrolling ::-webkit-scrollbar-thumb { background-color: var(--line-2); }
+html.is-scrolling,
+html.is-scrolling * { scrollbar-color: var(--line-2) transparent; }
+
+/* Reveal an inner scroll area's bar while the pointer is over it. */
+.scroll-area:hover::-webkit-scrollbar-thumb,
+.modal-body:hover::-webkit-scrollbar-thumb,
+.log-body:hover::-webkit-scrollbar-thumb { background-color: var(--line-2); }
+.scroll-area:hover,
+.modal-body:hover,
+.log-body:hover { scrollbar-color: var(--line-2) transparent; }
+
+/* The thumb stays visible while hovered or dragged. */
+::-webkit-scrollbar-thumb:hover { background-color: var(--fg-3); }
+::-webkit-scrollbar-thumb:active { background-color: var(--fg-2); }
+
+.scroll-area { overflow: auto; }
+
+/* ════════════════════════════════════════════════════════════════
+ * Density modes (Settings panel) — scale spacing, not just font size
+ * ════════════════════════════════════════════════════════════════ */
+.density-compact .page { padding: 16px 20px 56px; }
+.density-compact .kpi-grid,
+.density-compact .row-2,
+.density-compact .row-3,
+.density-compact .row-12 { gap: 10px; margin-bottom: 10px; }
+.density-compact .kpi { padding: 12px 14px; }
+.density-compact .kpi-val { font-size: 24px; }
+.density-compact .card-hd { padding: 10px 14px; }
+.density-compact .card-body:not(.tight) { padding: 13px; }
+.density-compact .tbl tbody td { padding: 7px 12px; }
+.density-compact .tbl thead th { padding: 7px 12px; }
+.density-compact .issue { padding: 9px 14px; }
+.density-compact .alert-row { padding: 10px 14px; }
+.density-compact .guest-row { padding-top: 7px; padding-bottom: 7px; }
+.density-compact .node-section-head { padding-top: 9px; padding-bottom: 9px; }
+.density-compact .filters { padding: 9px 14px; }
+.density-compact .node-tile { padding: 12px 14px; }
+.density-compact .log-row { padding-top: 4px; padding-bottom: 4px; }
+.density-compact .detail-grid { padding: 11px 14px; }
+.density-compact .tree-row { min-height: 26px; }
+
+.density-comfy .page { padding: 34px 40px 100px; }
+.density-comfy .kpi-grid,
+.density-comfy .row-2,
+.density-comfy .row-3,
+.density-comfy .row-12 { gap: 20px; margin-bottom: 20px; }
+.density-comfy .kpi { padding: 22px 24px; }
+.density-comfy .kpi-val { font-size: 30px; }
+.density-comfy .card-hd { padding: 18px 22px; }
+.density-comfy .card-body:not(.tight) { padding: 24px; }
+.density-comfy .tbl tbody td { padding: 15px 16px; }
+.density-comfy .tbl thead th { padding: 13px 16px; }
+.density-comfy .issue { padding: 16px 22px; }
+.density-comfy .alert-row { padding: 18px 22px; }
+.density-comfy .guest-row { padding-top: 14px; padding-bottom: 14px; }
+.density-comfy .node-section-head { padding-top: 17px; padding-bottom: 17px; }
+.density-comfy .filters { padding: 16px 22px; }
+.density-comfy .node-tile { padding: 22px 24px; }
+.density-comfy .log-row { padding-top: 8px; padding-bottom: 8px; }
+.density-comfy .detail-grid { padding: 18px 22px; }

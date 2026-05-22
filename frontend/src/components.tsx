@@ -217,6 +217,7 @@ export function Topbar({
   alertCount,
   onRefresh,
   onSettings,
+  onAlerts,
   actions,
 }: {
   crumb: string;
@@ -227,6 +228,7 @@ export function Topbar({
   alertCount: number;
   onRefresh: () => void;
   onSettings: () => void;
+  onAlerts: () => void;
   actions?: React.ReactNode;
 }) {
   const stale = staleSec > Math.max(20, pollSec * 3);
@@ -253,7 +255,11 @@ export function Topbar({
         <span className="live-dot" />
         {stale ? `Stale · ${staleSec}s` : `Live · ${pollSec}s polling`}
       </span>
-      <button className="icon-btn" title="Alerts">
+      <button
+        className="icon-btn"
+        title={alertCount > 0 ? `${alertCount} open alert(s)` : "Alerts"}
+        onClick={onAlerts}
+      >
         <Icon name="bell" />
         {alertCount > 0 && <span className="dot" />}
       </button>

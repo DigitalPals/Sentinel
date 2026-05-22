@@ -39,6 +39,24 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  // Reveal scrollbars only while the user is actively scrolling.
+  React.useEffect(() => {
+    let timer: number | undefined;
+    const onScroll = () => {
+      document.documentElement.classList.add("is-scrolling");
+      clearTimeout(timer);
+      timer = window.setTimeout(
+        () => document.documentElement.classList.remove("is-scrolling"),
+        700,
+      );
+    };
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("scroll", onScroll, { capture: true });
+    };
+  }, []);
+
   if (!ready || !snap) {
     return (
       <div className="boot">
@@ -78,7 +96,7 @@ export default function App() {
   }
 
   return (
-    <div className={"app" + (settings.showSpark ? "" : " no-spark")}>
+    <div className={"app density-" + settings.density + (settings.showSpark ? "" : " no-spark")}>
       <Sidebar
         page={page}
         onNavigate={setPage}
@@ -95,6 +113,7 @@ export default function App() {
           alertCount={alertCount}
           onRefresh={refresh}
           onSettings={() => setSettingsOpen(true)}
+          onAlerts={() => setPage("alerts")}
         />
         {stale && (
           <div style={{ padding: "16px 28px 0" }}>
