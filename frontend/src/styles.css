@@ -1845,3 +1845,6 @@ html.is-scrolling * { scrollbar-color: var(--line-2) transparent; }
   border-top: 1px solid var(--line);
 }
 .onb-foot .spacer { flex: 1; }
+
+/* Login / first-run account setup reuses the onboarding card, a touch narrower. */
+.login-card { max-width: 412px; }

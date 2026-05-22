@@ -217,6 +217,17 @@ export interface Snapshot {
 
 const DEFAULT_POLL_MS = 5000;
 
+/** Wrapper around `fetch` for the Sentinel API: always attaches the session
+ *  cookie, never caches, and broadcasts a `sentinel-unauthorized` event when a
+ *  request is rejected so the app can fall back to the login screen. */
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const r = await fetch(path, { cache: "no-store", credentials: "same-origin", ...init });
+  if (r.status === 401 && !path.startsWith("/api/auth/")) {
+    window.dispatchEvent(new Event("sentinel-unauthorized"));
+  }
+  return r;
+}
+
 export interface SnapshotState {
   snap: Snapshot | null;
   /** True once at least one successful fetch returned real data. */
@@ -238,7 +249,7 @@ export function useSnapshot(): SnapshotState {
 
   const fetchSnapshot = useCallback(async () => {
     try {
-      const r = await fetch("/api/snapshot", { cache: "no-store" });
+      const r = await apiFetch("/api/snapshot");
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data: Snapshot = await r.json();
       setSnap(data);
@@ -251,7 +262,7 @@ export function useSnapshot(): SnapshotState {
 
   // Pick up the configured frontend poll interval.
   useEffect(() => {
-    fetch("/api/settings", { cache: "no-store" })
+    apiFetch("/api/settings")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d && typeof d.frontendPollMs === "number") setPollMs(d.frontendPollMs);
@@ -277,7 +288,7 @@ export function useSnapshot(): SnapshotState {
 
 /** Apply an acknowledge / resolve / reopen action to an alert. */
 export async function alertAction(id: string, action: string): Promise<void> {
-  await fetch("/api/alerts/action", {
+  await apiFetch("/api/alerts/action", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id, action }),
@@ -299,8 +310,6 @@ export interface AppSettings {
   historyMaxSamples: number;
   historyRetentionDays: number;
   frontendPollMs: number;
-  /** Whether first-run onboarding has been completed or skipped. */
-  onboardingDone: boolean;
   /** Alert thresholds, keyed by rule name (e.g. `guest_mem_crit`). */
   thresholds: Record<string, number>;
   ui: UiPrefs;
@@ -343,12 +352,12 @@ async function jsonOrThrow(r: Response): Promise<any> {
 }
 
 export async function getSettings(): Promise<AppSettings> {
-  return jsonOrThrow(await fetch("/api/settings", { cache: "no-store" }));
+  return jsonOrThrow(await apiFetch("/api/settings"));
 }
 
 export async function putSettings(patch: Record<string, unknown>): Promise<AppSettings> {
   return jsonOrThrow(
-    await fetch("/api/settings", {
+    await apiFetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -357,7 +366,7 @@ export async function putSettings(patch: Record<string, unknown>): Promise<AppSe
 }
 
 export async function getSources(): Promise<SourcesData> {
-  return jsonOrThrow(await fetch("/api/sources", { cache: "no-store" }));
+  return jsonOrThrow(await apiFetch("/api/sources"));
 }
 
 export async function saveUnifiSource(
@@ -366,7 +375,7 @@ export async function saveUnifiSource(
 ): Promise<void> {
   const url = id == null ? "/api/sources/unifi" : `/api/sources/unifi/${id}`;
   await jsonOrThrow(
-    await fetch(url, {
+    await apiFetch(url, {
       method: id == null ? "POST" : "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -375,7 +384,7 @@ export async function saveUnifiSource(
 }
 
 export async function deleteUnifiSource(id: number): Promise<void> {
-  await jsonOrThrow(await fetch(`/api/sources/unifi/${id}`, { method: "DELETE" }));
+  await jsonOrThrow(await apiFetch(`/api/sources/unifi/${id}`, { method: "DELETE" }));
 }
 
 export async function saveProxmoxSource(
@@ -384,7 +393,7 @@ export async function saveProxmoxSource(
 ): Promise<void> {
   const url = id == null ? "/api/sources/proxmox" : `/api/sources/proxmox/${id}`;
   await jsonOrThrow(
-    await fetch(url, {
+    await apiFetch(url, {
       method: id == null ? "POST" : "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -393,15 +402,57 @@ export async function saveProxmoxSource(
 }
 
 export async function deleteProxmoxSource(id: number): Promise<void> {
-  await jsonOrThrow(await fetch(`/api/sources/proxmox/${id}`, { method: "DELETE" }));
+  await jsonOrThrow(await apiFetch(`/api/sources/proxmox/${id}`, { method: "DELETE" }));
 }
 
 export async function testSource(body: Record<string, unknown>): Promise<TestResult> {
   return jsonOrThrow(
-    await fetch("/api/sources/test", {
+    await apiFetch("/api/sources/test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
   );
+}
+
+// ── Authentication ──────────────────────────────────────────────────────────
+
+export interface AuthStatus {
+  /** No account exists yet — the frontend should show first-user setup. */
+  needsFirstUser: boolean;
+  /** The browser currently holds a valid session. */
+  authenticated: boolean;
+  username: string | null;
+}
+
+/** Public: whether the app needs first-user setup, a login, or neither. */
+export async function getAuthStatus(): Promise<AuthStatus> {
+  return jsonOrThrow(await apiFetch("/api/auth/status"));
+}
+
+/** Create the first administrator account (only works on a fresh install). */
+export async function authSetup(username: string, password: string): Promise<void> {
+  await jsonOrThrow(
+    await apiFetch("/api/auth/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    }),
+  );
+}
+
+/** Sign in with an existing account. */
+export async function authLogin(username: string, password: string): Promise<void> {
+  await jsonOrThrow(
+    await apiFetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    }),
+  );
+}
+
+/** End the current session. */
+export async function authLogout(): Promise<void> {
+  await apiFetch("/api/auth/logout", { method: "POST" });
 }

@@ -94,8 +94,6 @@ pub struct RuntimeConfig {
     pub history_max_samples: usize,
     pub history_retention_days: i64,
     pub frontend_poll_ms: u64,
-    /// Whether first-run onboarding has been completed or skipped.
-    pub onboarding_done: bool,
     pub thresholds: AlertThresholds,
     pub ui_prefs: UiPrefs,
     pub unifi: Option<UnifiConfig>,
@@ -132,7 +130,6 @@ impl RuntimeConfig {
             history_max_samples: setting(&map, "history_max_samples", 6000usize),
             history_retention_days: setting(&map, "history_retention_days", 30i64),
             frontend_poll_ms: setting(&map, "frontend_poll_ms", 5000),
-            onboarding_done: setting(&map, "onboarding_done", false),
             thresholds: setting(&map, "alert_thresholds", AlertThresholds::default()),
             ui_prefs: setting(&map, "ui_prefs", UiPrefs::default()),
             unifi,

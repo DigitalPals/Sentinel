@@ -1,6 +1,6 @@
-// Cybex Sentinel — app shell, routing and live snapshot wiring.
+// Cybex Sentinel — app shell, authentication gate, routing and live snapshot wiring.
 import React from "react";
-import { useSnapshot } from "./api";
+import { authLogout, getAuthStatus, useSnapshot, type AuthStatus } from "./api";
 import { Sidebar, Topbar } from "./components";
 import { SettingsPanel, useSettings } from "./settings";
 import Dashboard from "./pages/Dashboard";
@@ -10,6 +10,7 @@ import Alerts from "./pages/Alerts";
 import Events from "./pages/Events";
 import Settings from "./pages/Settings";
 import { Onboarding, useOnboarding } from "./onboarding";
+import { Login } from "./Login";
 
 const PAGES: Record<string, { crumb: string; title: string }> = {
   dashboard: { crumb: "Overview / Cluster", title: "Operations Dashboard" },
@@ -31,10 +32,114 @@ function resolvePage(): string {
 
 const pathForPage = (p: string): string => (p === "dashboard" ? "/" : "/" + p);
 
+/** Tracks authentication status and re-checks it whenever a session is lost. */
+function useAuth() {
+  const [status, setStatus] = React.useState<AuthStatus | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const refresh = React.useCallback(async () => {
+    try {
+      setStatus(await getAuthStatus());
+      setError(null);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }, []);
+
+  React.useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // Keep retrying while the backend is unreachable.
+  React.useEffect(() => {
+    if (status || !error) return;
+    const t = window.setTimeout(refresh, 2000);
+    return () => window.clearTimeout(t);
+  }, [status, error, refresh]);
+
+  // A dropped session (a 401 from any API call) sends us back to re-check.
+  React.useEffect(() => {
+    const onUnauth = () => refresh();
+    window.addEventListener("sentinel-unauthorized", onUnauth);
+    return () => window.removeEventListener("sentinel-unauthorized", onUnauth);
+  }, [refresh]);
+
+  return { status, error, refresh };
+}
+
+/** Authentication gate: shows the login / first-run setup screen until a valid
+ *  session exists, only then mounting the dashboard (and its polling). */
 export default function App() {
+  const { status, error, refresh } = useAuth();
+  // True only in the session where the first account was just created — drives
+  // how much of the onboarding wizard is shown.
+  const [justSetUp, setJustSetUp] = React.useState(false);
+
+  const onAuthenticated = React.useCallback(
+    (didSetUp: boolean) => {
+      if (didSetUp) setJustSetUp(true);
+      refresh();
+    },
+    [refresh],
+  );
+
+  const onLogout = React.useCallback(async () => {
+    try {
+      await authLogout();
+    } catch {
+      /* ignore — the cookie is cleared regardless, dropping us to login */
+    }
+    setJustSetUp(false);
+    refresh();
+  }, [refresh]);
+
+  if (!status) {
+    return (
+      <div className="boot">
+        <div className="brand-mark" />
+        {error ? (
+          <div className="boot-msg err">
+            Cannot reach the Sentinel backend — {error}. Retrying…
+          </div>
+        ) : (
+          <>
+            <div className="boot-spin" />
+            <div className="boot-msg">Connecting to Cybex Sentinel…</div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (status.needsFirstUser) {
+    return <Login needsFirstUser onAuthenticated={onAuthenticated} />;
+  }
+  if (!status.authenticated) {
+    return <Login onAuthenticated={onAuthenticated} />;
+  }
+  return (
+    <AppBody
+      justSetUp={justSetUp}
+      onLogout={onLogout}
+      username={status.username ?? ""}
+    />
+  );
+}
+
+/** The authenticated dashboard. Mounted only once a session exists, so snapshot
+ *  polling never runs on the login screen. */
+function AppBody({
+  justSetUp,
+  onLogout,
+  username,
+}: {
+  justSetUp: boolean;
+  onLogout: () => void;
+  username: string;
+}) {
   const { snap, ready, error, staleSec, refresh } = useSnapshot();
   const { settings, setSetting } = useSettings();
-  const onboarding = useOnboarding();
+  const onboarding = useOnboarding(justSetUp);
   const [page, setPageState] = React.useState<string>(resolvePage);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
 
@@ -82,7 +187,16 @@ export default function App() {
   }, []);
 
   const onboardingEl = onboarding.show ? (
-    <Onboarding settings={settings} setSetting={setSetting} onDone={onboarding.complete} />
+    <Onboarding
+      justSetUp={justSetUp}
+      needsIntegrations={onboarding.needsIntegrations}
+      settings={settings}
+      setSetting={setSetting}
+      onDone={() => {
+        onboarding.dismiss();
+        onboarding.refresh();
+      }}
+    />
   ) : null;
 
   if (!ready || !snap) {
@@ -133,7 +247,7 @@ export default function App() {
     <>
       {onboardingEl}
       <div className={"app density-" + settings.density + (settings.showSpark ? "" : " no-spark")}>
-      <Sidebar page={page} onNavigate={navigate} alertCount={alertCount} />
+      <Sidebar page={page} onNavigate={navigate} alertCount={alertCount} username={username} />
       <main className="main">
         <Topbar
           crumb={meta.crumb}
@@ -145,6 +259,7 @@ export default function App() {
           onRefresh={refresh}
           onSettings={() => setSettingsOpen(true)}
           onAlerts={() => navigate("alerts")}
+          onLogout={onLogout}
         />
         {stale && (
           <div style={{ padding: "16px 28px 0" }}>

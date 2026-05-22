@@ -1,11 +1,18 @@
-// Cybex Sentinel — first-run onboarding wizard.
+// Cybex Sentinel — dynamic onboarding wizard.
 //
-// Shown once, on a fresh database with no sources configured. Walks the user
-// through connecting a Proxmox host and a UniFi controller and picking display
-// preferences. Every step is optional and can be skipped.
+// Onboarding is derived from real state, not a stored flag: it reappears after
+// a restart whenever something still needs setting up.
+//
+//  • The integration section (Proxmox + UniFi) shows only while *no* source is
+//    configured. As soon as any one source exists, it disappears — restarting
+//    the app will not bring it back.
+//  • The Welcome and Preferences steps show only in the browser session where
+//    the first account was just created (`justSetUp`).
+//
+// Account creation itself is handled before this wizard, by the login/setup
+// screen — see Login.tsx.
 import React from "react";
 import {
-  getSettings,
   getSources,
   putSettings,
   saveProxmoxSource,
@@ -15,39 +22,48 @@ import {
 import { ACCENTS, type Accent, type Density, type Settings } from "./settings";
 
 type SetSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => void;
-const STEP_COUNT = 5;
+type StepId = "welcome" | "proxmox" | "unifi" | "preferences" | "done";
 
-/** Decide whether the first-run onboarding wizard should be shown. */
-export function useOnboarding() {
-  const [show, setShow] = React.useState(false);
+export interface OnboardingState {
+  /** Whether the wizard overlay should be shown. */
+  show: boolean;
+  /** True while neither Proxmox nor UniFi has an enabled source. */
+  needsIntegrations: boolean;
+  /** Re-check source state — call after a source is added. */
+  refresh: () => void;
+  /** Close the wizard for the rest of this session. */
+  dismiss: () => void;
+}
+
+/** Decide, from live state, whether onboarding should be shown. `justSetUp` is
+ *  true only in the session where the first account was just created — that is
+ *  what brings back the Welcome/Preferences steps. */
+export function useOnboarding(justSetUp: boolean): OnboardingState {
+  const [needsIntegrations, setNeedsIntegrations] = React.useState(false);
+  const [loaded, setLoaded] = React.useState(false);
+  const [dismissed, setDismissed] = React.useState(false);
+
+  const refresh = React.useCallback(() => {
+    getSources()
+      .then((s) => {
+        const configured =
+          s.proxmox.some((p) => p.enabled) || s.unifi.some((u) => u.enabled);
+        setNeedsIntegrations(!configured);
+        setLoaded(true);
+      })
+      .catch(() => {
+        // Backend unreachable — don't block the UI with onboarding.
+        setLoaded(true);
+      });
+  }, []);
 
   React.useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const [settings, sources] = await Promise.all([getSettings(), getSources()]);
-        if (!alive || settings.onboardingDone) return;
-        if (sources.unifi.length || sources.proxmox.length) {
-          // Already configured (e.g. via import-config) — nothing to onboard.
-          putSettings({ onboardingDone: true }).catch(() => {});
-        } else {
-          setShow(true);
-        }
-      } catch {
-        /* backend unreachable — don't block the UI with onboarding */
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
+    refresh();
+  }, [refresh]);
 
-  const complete = React.useCallback(() => {
-    setShow(false);
-    putSettings({ onboardingDone: true }).catch(() => {});
-  }, []);
-
-  return { show, complete };
+  const dismiss = React.useCallback(() => setDismissed(true), []);
+  const show = loaded && !dismissed && (justSetUp || needsIntegrations);
+  return { show, needsIntegrations, refresh, dismiss };
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -60,15 +76,30 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export function Onboarding({
+  justSetUp,
+  needsIntegrations,
   settings,
   setSetting,
   onDone,
 }: {
+  justSetUp: boolean;
+  needsIntegrations: boolean;
   settings: Settings;
   setSetting: SetSetting;
   onDone: () => void;
 }) {
-  const [step, setStep] = React.useState(0);
+  // The set of steps is fixed for the lifetime of the wizard — built once from
+  // the state captured when it opened, so steps never shift mid-flow.
+  const steps = React.useMemo<StepId[]>(() => {
+    const s: StepId[] = [];
+    if (justSetUp) s.push("welcome");
+    if (needsIntegrations) s.push("proxmox", "unifi");
+    if (justSetUp) s.push("preferences");
+    s.push("done");
+    return s;
+  }, [justSetUp, needsIntegrations]);
+
+  const [idx, setIdx] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [added, setAdded] = React.useState({ proxmox: 0, unifi: 0 });
@@ -77,10 +108,13 @@ export function Onboarding({
   const [uni, setUni] = React.useState({ name: "UniFi", host: "", apiKey: "" });
   const [pollSec, setPollSec] = React.useState(15);
 
+  const current = steps[Math.min(idx, steps.length - 1)];
+  const stepNo = idx + 1;
   const go = (n: number) => {
     setMsg(null);
-    setStep(n);
+    setIdx(Math.max(0, Math.min(n, steps.length - 1)));
   };
+  const next = () => go(idx + 1);
 
   const runTest = async (kind: "proxmox" | "unifi") => {
     setBusy(true);
@@ -110,7 +144,7 @@ export function Onboarding({
         tokenSecret: px.tokenSecret,
       });
       setAdded((a) => ({ ...a, proxmox: a.proxmox + 1 }));
-      go(2);
+      next();
     } catch (e: any) {
       setMsg({ tone: "err", text: String(e?.message ?? e) });
     } finally {
@@ -124,7 +158,7 @@ export function Onboarding({
     try {
       await saveUnifiSource(null, { name: uni.name, host: uni.host, apiKey: uni.apiKey });
       setAdded((a) => ({ ...a, unifi: a.unifi + 1 }));
-      go(3);
+      next();
     } catch (e: any) {
       setMsg({ tone: "err", text: String(e?.message ?? e) });
     } finally {
@@ -140,12 +174,12 @@ export function Onboarding({
         /* non-fatal — the default stays in effect */
       }
     }
-    go(4);
+    next();
   };
 
   // ── Step content ──────────────────────────────────────────────────────────
   let body: React.ReactNode;
-  if (step === 0) {
+  if (current === "welcome") {
     body = (
       <div className="onb-step">
         <div className="onb-hero" />
@@ -162,10 +196,10 @@ export function Onboarding({
         </ul>
       </div>
     );
-  } else if (step === 1) {
+  } else if (current === "proxmox") {
     body = (
       <div className="onb-step">
-        <div className="onb-step-tag">Step 1 · Proxmox VE</div>
+        <div className="onb-step-tag">Step {stepNo} · Proxmox VE</div>
         <h2 className="onb-title">Add a Proxmox host</h2>
         <p className="onb-text">
           Connect a Proxmox VE node or cluster with an API token — create one under
@@ -209,10 +243,10 @@ export function Onboarding({
         </button>
       </div>
     );
-  } else if (step === 2) {
+  } else if (current === "unifi") {
     body = (
       <div className="onb-step">
-        <div className="onb-step-tag">Step 2 · UniFi Network</div>
+        <div className="onb-step-tag">Step {stepNo} · UniFi Network</div>
         <h2 className="onb-title">Add a UniFi controller</h2>
         <p className="onb-text">
           Connect a UniFi Network controller (9.0+) with an API key — create one in the
@@ -248,10 +282,10 @@ export function Onboarding({
         </button>
       </div>
     );
-  } else if (step === 3) {
+  } else if (current === "preferences") {
     body = (
       <div className="onb-step">
-        <div className="onb-step-tag">Step 3 · Preferences</div>
+        <div className="onb-step-tag">Step {stepNo} · Preferences</div>
         <h2 className="onb-title">Make it yours</h2>
         <p className="onb-text">
           Pick a look and how often Sentinel polls your sources. All of this can be
@@ -310,34 +344,39 @@ export function Onboarding({
         <p className="onb-text">
           {parts.length
             ? `Connected ${parts.join(" and ")}. Sentinel is polling now — your dashboard will fill in shortly.`
-            : "No sources connected yet — you can add them any time from the Settings page."}
+            : "Sentinel is ready. You can connect or manage sources any time from the Settings page."}
         </p>
       </div>
     );
   }
 
   // ── Footer ────────────────────────────────────────────────────────────────
+  const backBtn =
+    idx > 0 ? (
+      <button className="set-btn" disabled={busy} onClick={() => go(idx - 1)}>
+        Back
+      </button>
+    ) : null;
+
   let foot: React.ReactNode;
-  if (step === 0) {
+  if (current === "welcome") {
     foot = (
       <>
         <button className="set-btn" onClick={onDone}>
           Skip setup
         </button>
         <span className="spacer" />
-        <button className="set-btn primary" onClick={() => go(1)}>
+        <button className="set-btn primary" onClick={next}>
           Get started
         </button>
       </>
     );
-  } else if (step === 1) {
+  } else if (current === "proxmox") {
     foot = (
       <>
-        <button className="set-btn" disabled={busy} onClick={() => go(0)}>
-          Back
-        </button>
+        {backBtn}
         <span className="spacer" />
-        <button className="set-btn" disabled={busy} onClick={() => go(2)}>
+        <button className="set-btn" disabled={busy} onClick={next}>
           Skip
         </button>
         <button className="set-btn primary" disabled={busy} onClick={addProxmox}>
@@ -345,14 +384,12 @@ export function Onboarding({
         </button>
       </>
     );
-  } else if (step === 2) {
+  } else if (current === "unifi") {
     foot = (
       <>
-        <button className="set-btn" disabled={busy} onClick={() => go(1)}>
-          Back
-        </button>
+        {backBtn}
         <span className="spacer" />
-        <button className="set-btn" disabled={busy} onClick={() => go(3)}>
+        <button className="set-btn" disabled={busy} onClick={next}>
           Skip
         </button>
         <button className="set-btn primary" disabled={busy} onClick={addUnifi}>
@@ -360,12 +397,10 @@ export function Onboarding({
         </button>
       </>
     );
-  } else if (step === 3) {
+  } else if (current === "preferences") {
     foot = (
       <>
-        <button className="set-btn" disabled={busy} onClick={() => go(2)}>
-          Back
-        </button>
+        {backBtn}
         <span className="spacer" />
         <button className="set-btn primary" disabled={busy} onClick={savePrefs}>
           Continue
@@ -375,9 +410,7 @@ export function Onboarding({
   } else {
     foot = (
       <>
-        <button className="set-btn" onClick={() => go(3)}>
-          Back
-        </button>
+        {backBtn}
         <span className="spacer" />
         <button className="set-btn primary" onClick={onDone}>
           Finish
@@ -393,13 +426,13 @@ export function Onboarding({
           <div className="brand-mark" />
           <div>
             <div className="brand-name">Cybex Sentinel</div>
-            <div className="brand-tag">first-run setup</div>
+            <div className="brand-tag">{justSetUp ? "first-run setup" : "finish setup"}</div>
           </div>
           <div className="onb-dots">
-            {Array.from({ length: STEP_COUNT }).map((_, i) => (
+            {steps.map((_, i) => (
               <span
                 key={i}
-                className={"onb-dot" + (i === step ? " active" : i < step ? " done" : "")}
+                className={"onb-dot" + (i === idx ? " active" : i < idx ? " done" : "")}
               />
             ))}
           </div>

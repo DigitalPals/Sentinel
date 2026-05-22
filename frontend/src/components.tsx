@@ -131,14 +131,22 @@ export function Icon({ name, ...rest }: { name: string } & React.HTMLAttributes<
 }
 
 // ── Sidebar ─────────────────────────────────────────────────
+
+/** Single-letter avatar initial derived from a username. */
+function initial(name: string): string {
+  return (name.trim()[0] ?? "").toUpperCase();
+}
+
 export function Sidebar({
   page,
   onNavigate,
   alertCount,
+  username,
 }: {
   page: string;
   onNavigate: (p: string) => void;
   alertCount: number;
+  username: string;
 }) {
   const items = [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
@@ -198,10 +206,15 @@ export function Sidebar({
       </button>
 
       <div className="sidebar-footer">
-        <div className="avatar">JP</div>
+        <div className="avatar">{initial(username) || "?"}</div>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 12, fontWeight: 500 }}>J. Pals</div>
-          <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--fg-3)" }}>noc · admin</div>
+          <div
+            style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis" }}
+            title={username}
+          >
+            {username || "—"}
+          </div>
+          <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--fg-3)" }}>administrator</div>
         </div>
       </div>
     </aside>
@@ -219,6 +232,7 @@ export function Topbar({
   onRefresh,
   onSettings,
   onAlerts,
+  onLogout,
   actions,
 }: {
   crumb: string;
@@ -230,6 +244,7 @@ export function Topbar({
   onRefresh: () => void;
   onSettings: () => void;
   onAlerts: () => void;
+  onLogout?: () => void;
   actions?: React.ReactNode;
 }) {
   const stale = staleSec > Math.max(20, pollSec * 3);
@@ -270,6 +285,11 @@ export function Topbar({
       <button className="icon-btn" title="Settings" onClick={onSettings}>
         <Icon name="settings" />
       </button>
+      {onLogout && (
+        <button className="icon-btn" title="Sign out" onClick={onLogout}>
+          <Icon name="power" />
+        </button>
+      )}
       {actions}
     </header>
   );

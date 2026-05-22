@@ -6,6 +6,7 @@
 //! PostgreSQL/TimescaleDB — the only external input is the `DATABASE_URL`
 //! connection string (which has a sensible default).
 
+mod auth;
 mod config;
 mod db;
 mod engine;
@@ -39,6 +40,13 @@ async fn main() -> anyhow::Result<()> {
     // legacy config.toml + data/history.json into the database, then exits.
     if std::env::args().nth(1).as_deref() == Some("import-config") {
         return importer::run(&pool).await;
+    }
+
+    // Best-effort housekeeping: drop login sessions that have already expired.
+    match db::delete_expired_sessions(&pool).await {
+        Ok(n) if n > 0 => tracing::info!("pruned {n} expired session(s)"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("could not prune expired sessions: {e:#}"),
     }
 
     let config = RuntimeConfig::load(&pool).await?;

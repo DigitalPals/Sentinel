@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
+    middleware,
     response::{Html, IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
@@ -12,11 +13,11 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tower_http::{
-    cors::CorsLayer,
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
 
+use crate::auth;
 use crate::config::{AlertThresholds, ProxmoxConfig, RuntimeConfig, UiPrefs, UnifiConfig};
 use crate::db;
 use crate::engine::{patch_alerts, AppState};
@@ -24,7 +25,17 @@ use crate::proxmox::ProxmoxClient;
 use crate::unifi::UnifiClient;
 
 pub fn router(state: Arc<AppState>) -> Router {
-    let api = Router::new()
+    // Public auth endpoints — reachable without a session, so the login page
+    // can load and the first user can be created.
+    let public = Router::new()
+        .route("/api/auth/status", get(auth::auth_status))
+        .route("/api/auth/setup", post(auth::auth_setup))
+        .route("/api/auth/login", post(auth::auth_login))
+        .route("/api/auth/logout", post(auth::auth_logout))
+        .with_state(state.clone());
+
+    // Everything else requires a valid login session.
+    let protected = Router::new()
         .route("/api/snapshot", get(snapshot))
         .route("/api/health", get(health))
         .route("/api/alerts/action", post(alert_action))
@@ -41,8 +52,17 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/sources/proxmox/:id",
             put(update_proxmox).delete(delete_proxmox),
         )
-        .with_state(state)
-        .layer(CorsLayer::permissive())
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_session,
+        ))
+        .with_state(state);
+
+    // No CORS layer: the backend serves its own SPA (same-origin), and the dev
+    // proxy makes requests same-origin too. A wildcard origin would, in any
+    // case, be rejected by browsers on the credentialed (cookie) requests.
+    let api = public
+        .merge(protected)
         .layer(TraceLayer::new_for_http());
 
     match resolve_frontend_dir() {
@@ -61,7 +81,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 // ── Error handling ──────────────────────────────────────────────────────────
 
 /// A JSON API error, rendered as `{ "error": "..." }`.
-struct ApiError(StatusCode, String);
+pub(crate) struct ApiError(pub(crate) StatusCode, pub(crate) String);
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -75,7 +95,7 @@ impl From<anyhow::Error> for ApiError {
     }
 }
 
-type ApiResult<T> = Result<Json<T>, ApiError>;
+pub(crate) type ApiResult<T> = Result<Json<T>, ApiError>;
 
 fn bad_request(msg: impl Into<String>) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, msg.into())
@@ -146,7 +166,6 @@ struct SettingsResponse {
     history_max_samples: usize,
     history_retention_days: i64,
     frontend_poll_ms: u64,
-    onboarding_done: bool,
     thresholds: AlertThresholds,
     ui: UiPrefs,
 }
@@ -159,7 +178,6 @@ fn settings_response(c: &RuntimeConfig) -> SettingsResponse {
         history_max_samples: c.history_max_samples,
         history_retention_days: c.history_retention_days,
         frontend_poll_ms: c.frontend_poll_ms,
-        onboarding_done: c.onboarding_done,
         thresholds: c.thresholds.clone(),
         ui: c.ui_prefs.clone(),
     }
@@ -179,7 +197,6 @@ struct SettingsUpdate {
     history_max_samples: Option<u64>,
     history_retention_days: Option<i64>,
     frontend_poll_ms: Option<u64>,
-    onboarding_done: Option<bool>,
     thresholds: Option<AlertThresholds>,
     ui: Option<UiPrefs>,
 }
@@ -208,9 +225,6 @@ async fn put_settings(
     }
     if let Some(v) = req.frontend_poll_ms {
         db::set_setting(pool, "frontend_poll_ms", &json!(v.max(500))).await?;
-    }
-    if let Some(v) = req.onboarding_done {
-        db::set_setting(pool, "onboarding_done", &json!(v)).await?;
     }
     if let Some(v) = req.thresholds {
         let value = serde_json::to_value(v).map_err(|e| anyhow::anyhow!(e))?;

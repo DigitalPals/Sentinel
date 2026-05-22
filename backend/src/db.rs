@@ -275,6 +275,99 @@ pub async fn delete_proxmox_source(pool: &PgPool, id: i64) -> anyhow::Result<boo
     Ok(res.rows_affected() > 0)
 }
 
+// ── Users & sessions ────────────────────────────────────────────────────────
+
+/// A user account as stored in the database.
+#[derive(Debug, Clone, FromRow)]
+pub struct UserRow {
+    pub id: i64,
+    pub username: String,
+    pub password_hash: String,
+}
+
+/// A live login session, joined with its owning user.
+#[derive(Debug, Clone, FromRow)]
+pub struct SessionRow {
+    pub user_id: i64,
+    pub username: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// How many user accounts exist. Zero means the app still needs first-run setup.
+pub async fn count_users(pool: &PgPool) -> anyhow::Result<i64> {
+    let row = sqlx::query("SELECT count(*) AS n FROM users")
+        .fetch_one(pool)
+        .await
+        .context("counting users")?;
+    Ok(row.get::<i64, _>("n"))
+}
+
+pub async fn insert_user(pool: &PgPool, username: &str, password_hash: &str) -> anyhow::Result<i64> {
+    let row = sqlx::query("INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id")
+        .bind(username)
+        .bind(password_hash)
+        .fetch_one(pool)
+        .await
+        .context("inserting user")?;
+    Ok(row.get("id"))
+}
+
+/// Look up a user by name, case-insensitively.
+pub async fn get_user_by_username(pool: &PgPool, username: &str) -> anyhow::Result<Option<UserRow>> {
+    sqlx::query_as::<_, UserRow>(
+        "SELECT id, username, password_hash FROM users WHERE lower(username) = lower($1)",
+    )
+    .bind(username)
+    .fetch_optional(pool)
+    .await
+    .context("loading user")
+}
+
+pub async fn create_session(
+    pool: &PgPool,
+    token_hash: &str,
+    user_id: i64,
+    expires_at: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(token_hash)
+        .bind(user_id)
+        .bind(expires_at)
+        .execute(pool)
+        .await
+        .context("creating session")?;
+    Ok(())
+}
+
+pub async fn get_session(pool: &PgPool, token_hash: &str) -> anyhow::Result<Option<SessionRow>> {
+    sqlx::query_as::<_, SessionRow>(
+        "SELECT s.user_id, u.username, s.expires_at FROM sessions s \
+         JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1",
+    )
+    .bind(token_hash)
+    .fetch_optional(pool)
+    .await
+    .context("loading session")
+}
+
+pub async fn delete_session(pool: &PgPool, token_hash: &str) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM sessions WHERE token_hash = $1")
+        .bind(token_hash)
+        .execute(pool)
+        .await
+        .context("deleting session")?;
+    Ok(())
+}
+
+/// Prune sessions whose expiry has passed — best-effort housekeeping on startup.
+pub async fn delete_expired_sessions(pool: &PgPool) -> anyhow::Result<u64> {
+    let res = sqlx::query("DELETE FROM sessions WHERE expires_at < now()")
+        .execute(pool)
+        .await
+        .context("pruning expired sessions")?;
+    Ok(res.rows_affected())
+}
+
 // ── Metric history ──────────────────────────────────────────────────────────
 
 /// One row of `metric_samples`. Maps onto [`Sample`] (the in-memory form keeps

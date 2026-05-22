@@ -2,6 +2,7 @@
 // Stored server-side via /api/settings (the `ui` group) so they are shared
 // across browsers; applied as CSS custom properties.
 import { useCallback, useEffect, useState } from "react";
+import { apiFetch } from "./api";
 
 export type Accent = "cyan" | "amber" | "violet" | "mint";
 export type Density = "compact" | "regular" | "comfy";
@@ -27,7 +28,7 @@ export function useSettings() {
   // Load the server-side UI preferences once on mount.
   useEffect(() => {
     let alive = true;
-    fetch("/api/settings", { cache: "no-store" })
+    apiFetch("/api/settings")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (alive && d && d.ui) setSettings({ ...DEFAULTS, ...d.ui });
@@ -44,7 +45,7 @@ export function useSettings() {
     setSettings((prev) => {
       const next = { ...prev, [key]: value };
       // Optimistic update; persist to the database in the background.
-      fetch("/api/settings", {
+      apiFetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ui: next }),

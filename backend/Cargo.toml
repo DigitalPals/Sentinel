@@ -10,9 +10,18 @@ path = "src/main.rs"
 
 [dependencies]
 axum = "0.7"
+axum-extra = { version = "0.9", features = ["cookie"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+# Authentication: Argon2id password hashing, CSPRNG session tokens, token
+# hashing. All pure-Rust, matching the project's rustls/no-C-deps stance.
+argon2 = "0.5"
+rand = "0.8"
+sha2 = "0.10"
+# `time` is already in the tree via the cookie crate; used here only to set
+# the session cookie's Max-Age.
+time = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
