@@ -8,6 +8,8 @@ import Unifi from "./pages/Unifi";
 import Proxmox from "./pages/Proxmox";
 import Alerts from "./pages/Alerts";
 import Events from "./pages/Events";
+import Settings from "./pages/Settings";
+import { Onboarding, useOnboarding } from "./onboarding";
 
 const PAGES: Record<string, { crumb: string; title: string }> = {
   dashboard: { crumb: "Overview / Cluster", title: "Operations Dashboard" },
@@ -15,6 +17,7 @@ const PAGES: Record<string, { crumb: string; title: string }> = {
   proxmox: { crumb: "Compute / Proxmox VE", title: "Proxmox Servers & Guests" },
   alerts: { crumb: "Operations / Alerts", title: "Alerts" },
   logs: { crumb: "Operations / Events & Logs", title: "Events & Logs" },
+  settings: { crumb: "System / Configuration", title: "Settings" },
 };
 
 /** Resolve the active page from the URL path, with legacy #hash fallback. */
@@ -31,6 +34,7 @@ const pathForPage = (p: string): string => (p === "dashboard" ? "/" : "/" + p);
 export default function App() {
   const { snap, ready, error, staleSec, refresh } = useSnapshot();
   const { settings, setSetting } = useSettings();
+  const onboarding = useOnboarding();
   const [page, setPageState] = React.useState<string>(resolvePage);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
 
@@ -77,19 +81,26 @@ export default function App() {
     };
   }, []);
 
+  const onboardingEl = onboarding.show ? (
+    <Onboarding settings={settings} setSetting={setSetting} onDone={onboarding.complete} />
+  ) : null;
+
   if (!ready || !snap) {
     return (
-      <div className="boot">
-        <div className="brand-mark" />
-        {error ? (
-          <div className="boot-msg err">Cannot reach the Sentinel backend — {error}. Retrying…</div>
-        ) : (
-          <>
-            <div className="boot-spin" />
-            <div className="boot-msg">Connecting to Cybex Sentinel…</div>
-          </>
-        )}
-      </div>
+      <>
+        {onboardingEl}
+        <div className="boot">
+          <div className="brand-mark" />
+          {error ? (
+            <div className="boot-msg err">Cannot reach the Sentinel backend — {error}. Retrying…</div>
+          ) : (
+            <>
+              <div className="boot-spin" />
+              <div className="boot-msg">Connecting to Cybex Sentinel…</div>
+            </>
+          )}
+        </div>
+      </>
     );
   }
 
@@ -111,18 +122,18 @@ export default function App() {
     case "logs":
       pageEl = <Events snap={snap} />;
       break;
+    case "settings":
+      pageEl = <Settings settings={settings} setSetting={setSetting} />;
+      break;
     default:
       pageEl = <Dashboard snap={snap} />;
   }
 
   return (
-    <div className={"app density-" + settings.density + (settings.showSpark ? "" : " no-spark")}>
-      <Sidebar
-        page={page}
-        onNavigate={navigate}
-        onSettings={() => setSettingsOpen(true)}
-        alertCount={alertCount}
-      />
+    <>
+      {onboardingEl}
+      <div className={"app density-" + settings.density + (settings.showSpark ? "" : " no-spark")}>
+      <Sidebar page={page} onNavigate={navigate} alertCount={alertCount} />
       <main className="main">
         <Topbar
           crumb={meta.crumb}
@@ -147,6 +158,7 @@ export default function App() {
       {settingsOpen && (
         <SettingsPanel settings={settings} setSetting={setSetting} onClose={() => setSettingsOpen(false)} />
       )}
-    </div>
+      </div>
+    </>
   );
 }

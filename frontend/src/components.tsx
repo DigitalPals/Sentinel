@@ -134,12 +134,10 @@ export function Icon({ name, ...rest }: { name: string } & React.HTMLAttributes<
 export function Sidebar({
   page,
   onNavigate,
-  onSettings,
   alertCount,
 }: {
   page: string;
   onNavigate: (p: string) => void;
-  onSettings: () => void;
   alertCount: number;
 }) {
   const items = [
@@ -189,7 +187,10 @@ export function Sidebar({
           {it.badge ? <span className="nav-badge">{it.badge}</span> : null}
         </button>
       ))}
-      <button className="nav-item" onClick={onSettings}>
+      <button
+        className={"nav-item" + (page === "settings" ? " active" : "")}
+        onClick={() => onNavigate("settings")}
+      >
         <span className="nav-icon">
           <Icon name="settings" />
         </span>

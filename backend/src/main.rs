@@ -2,10 +2,15 @@
 //!
 //! Polls every configured source on a fixed interval, aggregates the result
 //! into a single snapshot and serves it (plus the bundled frontend) over HTTP.
+//! All configuration, API credentials and metric history live in
+//! PostgreSQL/TimescaleDB — the only external input is the `DATABASE_URL`
+//! connection string (which has a sensible default).
 
 mod config;
+mod db;
 mod engine;
 mod history;
+mod importer;
 mod model;
 mod proxmox;
 mod routes;
@@ -13,7 +18,8 @@ mod unifi;
 
 use std::sync::{Arc, RwLock};
 
-use engine::{AlertStore, AppState};
+use config::RuntimeConfig;
+use engine::{build_clients, AlertStore, AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -24,9 +30,20 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let config = config::Config::load()?;
+    // Connect to the database and bring the schema up to date.
+    let pool = db::connect().await?;
+    db::migrate(&pool).await?;
+    db::setup_timescale(&pool).await;
+
+    // One-time migration helper: `cybex-sentinel import-config` imports the
+    // legacy config.toml + data/history.json into the database, then exits.
+    if std::env::args().nth(1).as_deref() == Some("import-config") {
+        return importer::run(&pool).await;
+    }
+
+    let config = RuntimeConfig::load(&pool).await?;
     tracing::info!(
-        "config loaded — {} Proxmox host(s), UniFi {}",
+        "config loaded — {} Proxmox source(s), UniFi {}",
         config.proxmox.len(),
         if config.unifi.is_some() {
             "configured"
@@ -34,25 +51,25 @@ async fn main() -> anyhow::Result<()> {
             "not configured"
         },
     );
+    if config.unifi.is_none() && config.proxmox.is_empty() {
+        tracing::warn!("no sources configured yet — add them on the Settings page");
+    }
 
-    let proxmox = config
-        .proxmox
-        .iter()
-        .map(proxmox::ProxmoxClient::new)
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let unifi = match &config.unifi {
-        Some(c) => Some(unifi::UnifiClient::new(c)?),
-        None => None,
-    };
+    let clients = build_clients(&config);
+    let history = history::History::new(
+        db::recent_samples(&pool, config.history_max_samples).await?,
+        config.history_max_samples,
+    );
+    let alerts = AlertStore::from_rows(db::load_alert_state(&pool).await?);
 
     let bind = config.bind.clone();
     let state = Arc::new(AppState {
-        config,
-        proxmox,
-        unifi,
+        pool,
+        config: RwLock::new(Arc::new(config)),
+        clients: RwLock::new(clients),
         snapshot: RwLock::new(Arc::new(model::Snapshot::default())),
-        history: RwLock::new(history::History::load()),
-        alerts: RwLock::new(AlertStore::default()),
+        history: RwLock::new(history),
+        alerts: RwLock::new(alerts),
     });
 
     // Background poller: refreshes the snapshot on the configured interval.

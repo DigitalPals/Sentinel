@@ -9,18 +9,57 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local, Utc};
+use sqlx::PgPool;
 
-use crate::config::Config;
+use crate::config::{AlertThresholds, RuntimeConfig};
+use crate::db::{self, AlertStateRow};
 use crate::history::{History, Sample};
 use crate::model::*;
 use crate::proxmox::{ProxmoxClient, ProxmoxData};
 use crate::unifi::{UnifiClient, UnifiData};
 
-/// Shared application state.
-pub struct AppState {
-    pub config: Config,
+/// The HTTP clients built from the current source set.
+pub struct Clients {
     pub proxmox: Vec<ProxmoxClient>,
     pub unifi: Option<UnifiClient>,
+    /// `RuntimeConfig::source_sig` of the config these were built from.
+    pub source_sig: u64,
+}
+
+/// Build the Proxmox/UniFi HTTP clients for `cfg`. A source that fails to build
+/// is skipped (and logged) rather than aborting, so the rest keep working.
+pub fn build_clients(cfg: &RuntimeConfig) -> Clients {
+    let mut proxmox = Vec::new();
+    for pc in &cfg.proxmox {
+        match ProxmoxClient::new(pc, cfg.http_timeout_sec) {
+            Ok(c) => proxmox.push(c),
+            Err(e) => tracing::error!("skipping Proxmox source '{}': {e:#}", pc.name),
+        }
+    }
+    let unifi = match &cfg.unifi {
+        Some(uc) => match UnifiClient::new(uc, cfg.http_timeout_sec) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                tracing::error!("skipping UniFi source: {e:#}");
+                None
+            }
+        },
+        None => None,
+    };
+    Clients {
+        proxmox,
+        unifi,
+        source_sig: cfg.source_sig(),
+    }
+}
+
+/// Shared application state.
+pub struct AppState {
+    pub pool: PgPool,
+    /// Latest configuration, reloaded from the database on every poll.
+    pub config: RwLock<Arc<RuntimeConfig>>,
+    /// HTTP clients, rebuilt when the source set changes.
+    pub clients: RwLock<Clients>,
     pub snapshot: RwLock<Arc<Snapshot>>,
     pub history: RwLock<History>,
     pub alerts: RwLock<AlertStore>,
@@ -29,6 +68,10 @@ pub struct AppState {
 impl AppState {
     pub fn current(&self) -> Arc<Snapshot> {
         self.snapshot.read().unwrap().clone()
+    }
+
+    pub fn config(&self) -> Arc<RuntimeConfig> {
+        self.config.read().unwrap().clone()
     }
 }
 
@@ -136,6 +179,42 @@ impl AlertStore {
         }
         true
     }
+
+    /// Rebuild the store from persisted rows — restores ack/resolve state and
+    /// alert ages across a backend restart.
+    pub fn from_rows(rows: Vec<AlertStateRow>) -> Self {
+        let mut map = HashMap::new();
+        for r in rows {
+            map.insert(
+                r.alert_key,
+                AlertMeta {
+                    first_seen: r.first_seen,
+                    last_seen: r.last_seen,
+                    occurrences: r.occurrences.max(0) as u32,
+                    status: r.status,
+                    assignee: r.assignee,
+                    present: false,
+                    present_before: false,
+                },
+            );
+        }
+        Self { map }
+    }
+
+    /// The tracked state as rows ready to persist to `alert_state`.
+    pub fn rows(&self) -> Vec<AlertStateRow> {
+        self.map
+            .iter()
+            .map(|(k, m)| AlertStateRow {
+                alert_key: k.clone(),
+                first_seen: m.first_seen,
+                last_seen: m.last_seen,
+                occurrences: m.occurrences as i32,
+                status: m.status.clone(),
+                assignee: m.assignee.clone(),
+            })
+            .collect()
+    }
 }
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
@@ -232,39 +311,79 @@ fn kpi(display: impl Into<String>, unit: impl Into<String>, sub: impl Into<Strin
 // ── Poller ──────────────────────────────────────────────────────────────────
 
 pub async fn run_poller(state: Arc<AppState>) {
-    let interval = state.config.poll_interval_sec.max(5);
     loop {
         let started = Instant::now();
-        poll_once(&state).await;
+
+        // Reload configuration from the database; reuse the last good config
+        // if the database is briefly unreachable.
+        let cfg = match RuntimeConfig::load(&state.pool).await {
+            Ok(c) => Arc::new(c),
+            Err(e) => {
+                tracing::warn!("could not reload configuration from database: {e:#}");
+                state.config()
+            }
+        };
+
+        // Rebuild HTTP clients when the source set (or HTTP timeout) changed,
+        // so credential edits made in the Settings page apply within one poll.
+        let want_sig = cfg.source_sig();
+        let stale = state.clients.read().unwrap().source_sig != want_sig;
+        if stale {
+            let clients = build_clients(&cfg);
+            tracing::info!(
+                "sources changed — {} Proxmox client(s), UniFi {}",
+                clients.proxmox.len(),
+                if clients.unifi.is_some() { "configured" } else { "not configured" },
+            );
+            *state.clients.write().unwrap() = clients;
+        }
+        *state.config.write().unwrap() = cfg.clone();
+
+        let interval = cfg.poll_interval_sec.max(5);
+        poll_once(&state, &cfg).await;
+
         let wait = Duration::from_secs(interval).saturating_sub(started.elapsed());
         tokio::time::sleep(wait).await;
     }
 }
 
-async fn poll_once(state: &Arc<AppState>) {
+async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
+    // Take cheap clones of the clients so no lock is held across an await.
+    let (proxmox, unifi) = {
+        let c = state.clients.read().unwrap();
+        (c.proxmox.clone(), c.unifi.clone())
+    };
+
     // Query Proxmox hosts and UniFi concurrently.
-    let pmx_futs = state.proxmox.iter().map(|c| async move {
+    let pmx_futs = proxmox.iter().map(|c| async move {
         (
             c.name.clone(),
             c.collect().await.map_err(|e| format!("{e:#}")),
         )
     });
     let unifi_fut = async {
-        match &state.unifi {
+        match &unifi {
             Some(c) => Some(c.collect().await.map_err(|e| format!("{e:#}"))),
             None => None,
         }
     };
-    let (pmx, unifi) = futures::join!(futures::future::join_all(pmx_futs), unifi_fut);
+    let (pmx, unifi_res) = futures::join!(futures::future::join_all(pmx_futs), unifi_fut);
 
-    let snapshot = {
+    let (snapshot, sample) = {
         let mut history = state.history.write().unwrap();
         let mut store = state.alerts.write().unwrap();
-        build(&state.config, &pmx, &unifi, &mut history, &mut store)
+        build(cfg, &pmx, &unifi_res, &mut history, &mut store)
     };
 
-    // Persist the rolling history so the bandwidth chart survives restarts.
-    state.history.read().unwrap().save();
+    // Persist the new sample to the time-series table and the reconciled alert
+    // workflow state; failures are logged but never fatal.
+    if let Err(e) = db::insert_sample(&state.pool, &sample).await {
+        tracing::warn!("could not persist metric sample: {e:#}");
+    }
+    let alert_rows = state.alerts.read().unwrap().rows();
+    if let Err(e) = db::save_alert_state(&state.pool, &alert_rows).await {
+        tracing::warn!("could not persist alert state: {e:#}");
+    }
 
     let ok_sources = snapshot.sources.iter().filter(|s| s.ok).count();
     tracing::info!(
@@ -280,12 +399,12 @@ async fn poll_once(state: &Arc<AppState>) {
 // ── Snapshot builder ────────────────────────────────────────────────────────
 
 fn build(
-    config: &Config,
+    config: &RuntimeConfig,
     pmx: &[(String, Result<ProxmoxData, String>)],
     unifi: &Option<Result<UnifiData, String>>,
     history: &mut History,
     store: &mut AlertStore,
-) -> Snapshot {
+) -> (Snapshot, Sample) {
     let now = Utc::now().timestamp();
     let mut sources: Vec<SourceHealth> = Vec::new();
 
@@ -308,7 +427,7 @@ fn build(
                 error: Some(e.clone()),
             }),
             Ok(data) => {
-                let (n, g, ev, c, su, st) = process_proxmox(data, now);
+                let (n, g, ev, c, su, st) = process_proxmox(data, now, &config.thresholds);
                 let node_count = n.len();
                 nodes.extend(n);
                 for ng in g {
@@ -345,7 +464,7 @@ fn build(
             error: Some(e.clone()),
         }),
         Some(Ok(data)) => {
-            let (view, topo, evs, ucands, down, up) = process_unifi(data, now);
+            let (view, topo, evs, ucands, down, up) = process_unifi(data, now, &config.thresholds);
             wan_down = down;
             wan_up = up;
             events.extend(evs);
@@ -408,7 +527,8 @@ fn build(
     let lxc_count = all_guests.iter().filter(|g| g.kind == "lxc").count() as u32;
 
     // ── Append history sample, then derive sparklines from it ────────────
-    history.push(Sample {
+    history.set_max(config.history_max_samples);
+    let sample = Sample {
         t: now,
         wan_down_mbps: wan_down,
         wan_up_mbps: wan_up,
@@ -427,7 +547,8 @@ fn build(
         poe_ports: unifi_view.poe_active as f64,
         events_total: events.len() as f64,
         error_events: error_events as f64,
-    });
+    };
+    history.push(sample.clone());
 
     // ── Dashboard ────────────────────────────────────────────────────────
     let bandwidth = build_bandwidth(history);
@@ -612,7 +733,7 @@ fn build(
     let alerts_view = build_alerts_view(alerts, history);
     let events_view = build_events_view(events, history);
 
-    Snapshot {
+    let snapshot = Snapshot {
         generated_at: Utc::now().to_rfc3339(),
         poll_interval_sec: config.poll_interval_sec,
         sources,
@@ -622,7 +743,8 @@ fn build(
         topology,
         alerts: alerts_view,
         events: events_view,
-    }
+    };
+    (snapshot, sample)
 }
 
 /// Re-apply alert workflow statuses to the live snapshot after an action,
@@ -661,6 +783,7 @@ fn sev_rank(sev: &str) -> u8 {
 fn process_proxmox(
     data: &ProxmoxData,
     now: i64,
+    th: &AlertThresholds,
 ) -> (
     Vec<NodeTile>,
     Vec<NodeGuests>,
@@ -688,9 +811,9 @@ fn process_proxmox(
         let disk = pct(r.disk, r.maxdisk);
         let status = if !running {
             "stop".to_string()
-        } else if mem >= 92 {
+        } else if mem >= th.guest_mem_crit {
             "crit".to_string()
-        } else if mem >= 85 || cpu >= 88 {
+        } else if mem >= th.guest_mem_warn || cpu >= th.guest_cpu_warn {
             "warn".to_string()
         } else {
             "ok".to_string()
@@ -727,7 +850,7 @@ fn process_proxmox(
                 guest.id,
                 guest.name
             );
-            if mem >= 92 {
+            if mem >= th.guest_mem_crit {
                 cands.push(Candidate {
                     key: format!("pmx:{}:{}:{}:mem", data.server, node, guest.id),
                     sev: "crit".to_string(),
@@ -738,9 +861,9 @@ fn process_proxmox(
                     desc: format!(
                         "{label} is at {mem}% memory utilization on node {node}. Sustained pressure can trigger swapping and OOM kills."
                     ),
-                    rule: "guest.mem.utilization > 90%".to_string(),
+                    rule: format!("guest.mem.utilization >= {}%", th.guest_mem_crit),
                 });
-            } else if mem >= 85 {
+            } else if mem >= th.guest_mem_warn {
                 cands.push(Candidate {
                     key: format!("pmx:{}:{}:{}:mem", data.server, node, guest.id),
                     sev: "warn".to_string(),
@@ -749,10 +872,10 @@ fn process_proxmox(
                     target: label.clone(),
                     title: format!("Elevated memory {mem}% on {}", guest.name),
                     desc: format!("{label} is using {mem}% of its allocated memory on node {node}."),
-                    rule: "guest.mem.utilization > 85%".to_string(),
+                    rule: format!("guest.mem.utilization >= {}%", th.guest_mem_warn),
                 });
             }
-            if cpu >= 88 {
+            if cpu >= th.guest_cpu_warn {
                 cands.push(Candidate {
                     key: format!("pmx:{}:{}:{}:cpu", data.server, node, guest.id),
                     sev: "warn".to_string(),
@@ -761,10 +884,10 @@ fn process_proxmox(
                     target: label.clone(),
                     title: format!("Sustained CPU {cpu}% on {}", guest.name),
                     desc: format!("{label} is consuming {cpu}% CPU on node {node}."),
-                    rule: "guest.cpu.utilization > 85%".to_string(),
+                    rule: format!("guest.cpu.utilization >= {}%", th.guest_cpu_warn),
                 });
             }
-            if disk >= 90 {
+            if disk >= th.guest_disk_warn {
                 cands.push(Candidate {
                     key: format!("pmx:{}:{}:{}:disk", data.server, node, guest.id),
                     sev: "warn".to_string(),
@@ -773,7 +896,7 @@ fn process_proxmox(
                     target: label,
                     title: format!("Disk {disk}% full on {}", guest.name),
                     desc: format!("{} root volume is {disk}% full on node {node}.", guest.name),
-                    rule: "guest.disk.utilization > 90%".to_string(),
+                    rule: format!("guest.disk.utilization >= {}%", th.guest_disk_warn),
                 });
             }
         }
@@ -802,16 +925,16 @@ fn process_proxmox(
         };
         let status = if !online {
             "crit"
-        } else if mem >= 90 || cpu >= 92 {
+        } else if mem >= th.node_mem_crit || cpu >= th.node_cpu_crit {
             "crit"
-        } else if mem >= 80 || cpu >= 85 || disk >= 90 {
+        } else if mem >= th.node_mem_warn || cpu >= th.node_cpu_warn || disk >= th.node_disk_warn {
             "warn"
         } else {
             "ok"
         };
 
         if online {
-            if mem >= 90 {
+            if mem >= th.node_mem_crit {
                 cands.push(Candidate {
                     key: format!("pmx:{}:{}:node-mem", data.server, node),
                     sev: "crit".to_string(),
@@ -820,10 +943,10 @@ fn process_proxmox(
                     target: format!("node {node}"),
                     title: format!("Node {node} memory at {mem}%"),
                     desc: format!("Proxmox node {node} on {} is at {mem}% memory utilization.", data.server),
-                    rule: "node.mem.utilization > 90%".to_string(),
+                    rule: format!("node.mem.utilization >= {}%", th.node_mem_crit),
                 });
             }
-            if disk >= 90 {
+            if disk >= th.node_disk_warn {
                 cands.push(Candidate {
                     key: format!("pmx:{}:{}:node-disk", data.server, node),
                     sev: "warn".to_string(),
@@ -832,7 +955,7 @@ fn process_proxmox(
                     target: format!("node {node}"),
                     title: format!("Node {node} root filesystem {disk}% full"),
                     desc: format!("Proxmox node {node} root filesystem is {disk}% full."),
-                    rule: "node.rootfs.utilization > 90%".to_string(),
+                    rule: format!("node.rootfs.utilization >= {}%", th.node_disk_warn),
                 });
             }
         } else {
@@ -940,6 +1063,7 @@ fn process_proxmox(
 fn process_unifi(
     data: &UnifiData,
     now: i64,
+    th: &AlertThresholds,
 ) -> (UnifiView, TopoNode, Vec<Event>, Vec<Candidate>, f64, f64) {
     // Clients per device, by the device they connect through.
     let mut clients_per_device: HashMap<String, u32> = HashMap::new();
@@ -988,7 +1112,7 @@ fn process_unifi(
         let mem = b.stats.memory_utilization_pct.unwrap_or(0.0).round() as u32;
         let status = if !online {
             "crit"
-        } else if cpu >= 90 || mem >= 92 {
+        } else if cpu >= th.unifi_cpu_warn || mem >= th.unifi_mem_warn {
             "warn"
         } else {
             "ok"
@@ -1103,7 +1227,7 @@ fn process_unifi(
                 target: "heartbeat".to_string(),
                 msg: format!("device unreachable — {} '{}' offline", dev.kind, dev.name),
             });
-        } else if cpu >= 90 || mem >= 92 {
+        } else if cpu >= th.unifi_cpu_warn || mem >= th.unifi_mem_warn {
             cands.push(Candidate {
                 key: format!("unifi:{}:load", dev.id),
                 sev: "warn".to_string(),
@@ -1112,7 +1236,10 @@ fn process_unifi(
                 target: format!("{} · {}", dev.name, dev.ip),
                 title: format!("{} '{}' under high load", dev.kind, dev.name),
                 desc: format!("'{}' is at {cpu}% CPU / {mem}% memory.", dev.name),
-                rule: "device.cpu > 90% or device.mem > 92%".to_string(),
+                rule: format!(
+                    "device.cpu >= {}% or device.mem >= {}%",
+                    th.unifi_cpu_warn, th.unifi_mem_warn
+                ),
             });
         }
         if b.list.firmware_updatable {

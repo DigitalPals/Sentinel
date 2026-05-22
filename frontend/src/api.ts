@@ -215,7 +215,7 @@ export interface Snapshot {
   events: EventsView;
 }
 
-const POLL_MS = 5000;
+const DEFAULT_POLL_MS = 5000;
 
 export interface SnapshotState {
   snap: Snapshot | null;
@@ -227,11 +227,13 @@ export interface SnapshotState {
   refresh: () => void;
 }
 
-/** Polls `/api/snapshot` every 5s and exposes the latest snapshot. */
+/** Polls `/api/snapshot` and exposes the latest snapshot. The poll interval is
+ *  taken from the server-side `frontendPollMs` setting. */
 export function useSnapshot(): SnapshotState {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [staleSec, setStaleSec] = useState(0);
+  const [pollMs, setPollMs] = useState(DEFAULT_POLL_MS);
   const lastOk = useRef<number>(0);
 
   const fetchSnapshot = useCallback(async () => {
@@ -247,9 +249,19 @@ export function useSnapshot(): SnapshotState {
     }
   }, []);
 
+  // Pick up the configured frontend poll interval.
+  useEffect(() => {
+    fetch("/api/settings", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d.frontendPollMs === "number") setPollMs(d.frontendPollMs);
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     fetchSnapshot();
-    const poll = setInterval(fetchSnapshot, POLL_MS);
+    const poll = setInterval(fetchSnapshot, pollMs);
     const tick = setInterval(() => {
       setStaleSec(lastOk.current ? Math.floor((Date.now() - lastOk.current) / 1000) : 0);
     }, 1000);
@@ -257,7 +269,7 @@ export function useSnapshot(): SnapshotState {
       clearInterval(poll);
       clearInterval(tick);
     };
-  }, [fetchSnapshot]);
+  }, [fetchSnapshot, pollMs]);
 
   const ready = !!snap && !!snap.generatedAt;
   return { snap, ready, error, staleSec, refresh: fetchSnapshot };
@@ -270,4 +282,126 @@ export async function alertAction(id: string, action: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id, action }),
   });
+}
+
+// ── Settings & sources ──────────────────────────────────────────────────────
+
+export interface UiPrefs {
+  accent: string;
+  density: string;
+  showSpark: boolean;
+}
+
+export interface AppSettings {
+  pollIntervalSec: number;
+  bind: string;
+  httpTimeoutSec: number;
+  historyMaxSamples: number;
+  historyRetentionDays: number;
+  frontendPollMs: number;
+  /** Whether first-run onboarding has been completed or skipped. */
+  onboardingDone: boolean;
+  /** Alert thresholds, keyed by rule name (e.g. `guest_mem_crit`). */
+  thresholds: Record<string, number>;
+  ui: UiPrefs;
+}
+
+export interface UnifiSource {
+  id: number;
+  name: string;
+  host: string;
+  /** True if an API key is stored — the key itself is never sent to the UI. */
+  hasSecret: boolean;
+  enabled: boolean;
+}
+
+export interface ProxmoxSource {
+  id: number;
+  name: string;
+  host: string;
+  tokenId: string;
+  /** True if a token secret is stored. */
+  hasSecret: boolean;
+  enabled: boolean;
+}
+
+export interface SourcesData {
+  unifi: UnifiSource[];
+  proxmox: ProxmoxSource[];
+}
+
+export interface TestResult {
+  ok: boolean;
+  detail: string;
+}
+
+/** Parse a JSON response, throwing the API's `error` message on failure. */
+async function jsonOrThrow(r: Response): Promise<any> {
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body?.error || `HTTP ${r.status}`);
+  return body;
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  return jsonOrThrow(await fetch("/api/settings", { cache: "no-store" }));
+}
+
+export async function putSettings(patch: Record<string, unknown>): Promise<AppSettings> {
+  return jsonOrThrow(
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+  );
+}
+
+export async function getSources(): Promise<SourcesData> {
+  return jsonOrThrow(await fetch("/api/sources", { cache: "no-store" }));
+}
+
+export async function saveUnifiSource(
+  id: number | null,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const url = id == null ? "/api/sources/unifi" : `/api/sources/unifi/${id}`;
+  await jsonOrThrow(
+    await fetch(url, {
+      method: id == null ? "POST" : "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function deleteUnifiSource(id: number): Promise<void> {
+  await jsonOrThrow(await fetch(`/api/sources/unifi/${id}`, { method: "DELETE" }));
+}
+
+export async function saveProxmoxSource(
+  id: number | null,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const url = id == null ? "/api/sources/proxmox" : `/api/sources/proxmox/${id}`;
+  await jsonOrThrow(
+    await fetch(url, {
+      method: id == null ? "POST" : "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function deleteProxmoxSource(id: number): Promise<void> {
+  await jsonOrThrow(await fetch(`/api/sources/proxmox/${id}`, { method: "DELETE" }));
+}
+
+export async function testSource(body: Record<string, unknown>): Promise<TestResult> {
+  return jsonOrThrow(
+    await fetch("/api/sources/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
 }

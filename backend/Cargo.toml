@@ -16,12 +16,24 @@ tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
+# `toml` is retained ONLY for the one-time `import-config` subcommand
+# (src/importer.rs), which reads the legacy config.toml into the database.
+# Runtime configuration is loaded from PostgreSQL, never from a file.
 toml = "0.8"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde", "clock"], default-features = false }
 futures = "0.3"
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "macros",
+    "migrate",
+    "chrono",
+    "json",
+] }
 
 [profile.release]
 opt-level = 2

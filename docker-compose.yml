@@ -1,0 +1,27 @@
+# TimescaleDB (PostgreSQL) — the backing store for Cybex Sentinel.
+# All settings, API credentials and metric history live here.
+#
+#   docker compose up -d db
+#
+# The backend connects with the DATABASE_URL below by default; override the
+# DATABASE_URL environment variable to point at a different server.
+services:
+  db:
+    image: timescale/timescaledb:2.17.2-pg16
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel
+      POSTGRES_DB: sentinel
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinel"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  pgdata:

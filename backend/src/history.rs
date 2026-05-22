@@ -1,16 +1,14 @@
 //! Rolling metric history.
 //!
 //! Each poll appends one [`Sample`] of cluster-wide scalars. The series powers
-//! the KPI sparklines and the 24h dashboard bandwidth chart. It is persisted
-//! to `data/history.json` so the chart survives restarts and keeps filling in.
+//! the KPI sparklines and the 24h dashboard bandwidth chart. Every sample is
+//! persisted to the `metric_samples` TimescaleDB hypertable; this struct keeps
+//! the recent working set in memory so the sparkline/trend/window helpers stay
+//! cheap. The working set is seeded from the database on startup.
 
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
-
-/// Roughly 24h of samples at a 15s poll interval, capped for memory/disk.
-const MAX_SAMPLES: usize = 6000;
-const HISTORY_PATH: &str = "data/history.json";
 
 /// One time-stamped row of monitored scalars.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -36,34 +34,39 @@ pub struct Sample {
     pub error_events: f64,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+/// In-memory working set of recent samples, capped at `max` entries.
+#[derive(Debug)]
 pub struct History {
     pub samples: VecDeque<Sample>,
+    max: usize,
 }
 
 impl History {
-    /// Load persisted history from disk, or start fresh.
-    pub fn load() -> Self {
-        match std::fs::read_to_string(HISTORY_PATH) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
-            Err(_) => Self::default(),
+    /// Build the working set from samples loaded out of the database
+    /// (oldest-first), trimmed to the most recent `max`.
+    pub fn new(samples: Vec<Sample>, max: usize) -> Self {
+        let max = max.max(1);
+        let mut samples: VecDeque<Sample> = samples.into();
+        while samples.len() > max {
+            samples.pop_front();
         }
+        Self { samples, max }
     }
 
-    pub fn push(&mut self, s: Sample) {
-        self.samples.push_back(s);
-        while self.samples.len() > MAX_SAMPLES {
+    /// Update the working-set cap (the `history_max_samples` setting may change
+    /// at runtime), trimming immediately if it shrank.
+    pub fn set_max(&mut self, max: usize) {
+        self.max = max.max(1);
+        while self.samples.len() > self.max {
             self.samples.pop_front();
         }
     }
 
-    /// Persist the series; failure is logged but never fatal.
-    pub fn save(&self) {
-        let _ = std::fs::create_dir_all("data");
-        if let Ok(json) = serde_json::to_string(self) {
-            if let Err(e) = std::fs::write(HISTORY_PATH, json) {
-                tracing::warn!("could not persist history: {e}");
-            }
+    /// Append a freshly-built sample to the working set.
+    pub fn push(&mut self, s: Sample) {
+        self.samples.push_back(s);
+        while self.samples.len() > self.max {
+            self.samples.pop_front();
         }
     }
 
@@ -71,7 +74,7 @@ impl History {
     pub fn spark(&self, n: usize, field: impl Fn(&Sample) -> f64) -> Vec<f64> {
         let len = self.samples.len();
         let start = len.saturating_sub(n);
-        self.samples.iter().skip(start).map(|s| field(&s)).collect()
+        self.samples.iter().skip(start).map(|s| field(s)).collect()
     }
 
     /// Signed change of a field over roughly the last `n` samples.
@@ -91,11 +94,7 @@ impl History {
     pub fn window(&self, window_secs: i64, max_points: usize) -> Vec<Sample> {
         let now = self.samples.back().map(|s| s.t).unwrap_or(0);
         let cutoff = now - window_secs;
-        let recent: Vec<&Sample> = self
-            .samples
-            .iter()
-            .filter(|s| s.t >= cutoff)
-            .collect();
+        let recent: Vec<&Sample> = self.samples.iter().filter(|s| s.t >= cutoff).collect();
         if recent.len() <= max_points {
             return recent.into_iter().cloned().collect();
         }

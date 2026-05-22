@@ -17,9 +17,12 @@ data, no mock data.
 - **Backend** — Rust ([axum](https://github.com/tokio-rs/axum) + [tokio](https://tokio.rs) +
   [reqwest](https://github.com/seanmonstar/reqwest)). A background task polls every
   source on a fixed interval, aggregates one snapshot, and serves it over a small
-  JSON API. It also serves the built frontend, so deployment is a single binary.
+  JSON API. It also serves the built frontend, so the application is a single binary.
 - **Frontend** — React + TypeScript, built with [Vite](https://vite.dev) and
-  **Bun** as the package manager / runtime. Polls the backend every 5s.
+  **Bun** as the package manager / runtime. Polls the backend on a configurable interval.
+- **Storage** — PostgreSQL + [TimescaleDB](https://www.timescale.com/). Holds all
+  settings and API credentials, and the metric history as a time-series hypertable
+  (with retention, compression and an hourly continuous aggregate).
 
 ## Pages
 
@@ -41,60 +44,67 @@ Everything on screen is derived from live API calls:
   (`/proxy/network/integration/v1`, UniFi Network 9.0+), authenticated with an
   API key. Topology is reconstructed from each device's uplink relationship.
 
-The dashboard bandwidth chart accumulates a real WAN time-series in
-`backend/data/history.json`; it starts sparse and fills toward 24h as the
-backend runs.
+The dashboard bandwidth chart accumulates a real WAN time-series in the
+`metric_samples` TimescaleDB hypertable; it starts sparse and fills toward 24h
+as the backend runs.
 
 ## Prerequisites
 
 - [Rust](https://rustup.rs) (stable) — `rustup default stable`
 - [Bun](https://bun.sh) ≥ 1.3
+- [Docker](https://docs.docker.com/get-docker/) — runs the bundled PostgreSQL +
+  TimescaleDB container. (Or bring your own PostgreSQL ≥ 14 with the TimescaleDB
+  extension installed.)
 
 ## Configuration
 
-Backend configuration lives in `backend/config.toml` (see
-`backend/config.example.toml` for the template). It is pre-filled with the
-target infrastructure:
+All configuration — sources, API credentials, polling/tuning values, alert
+thresholds and display preferences — lives in the database. There is no config
+file. On a fresh database the backend starts with no sources; add UniFi and
+Proxmox endpoints and adjust everything else from the in-app **Settings** page
+(backed by the `/api/settings` and `/api/sources` endpoints).
 
-```toml
-poll_interval_sec = 15
-bind = "0.0.0.0:8787"
+The one thing that cannot live in the database is the database's own address.
+The backend reads it from the `DATABASE_URL` environment variable, defaulting to
+the bundled container — `postgres://sentinel:sentinel@localhost:5432/sentinel`.
 
-[unifi]
-host = "https://10.10.0.1"
-api_key = "…"
+Self-signed certificates on the monitored UniFi/Proxmox hosts are accepted
+automatically.
 
-[[proxmox]]
-name = "PVE1"
-host = "https://10.10.0.30:8006"
-token_id = "monitoring@pve!monitoring-tool"
-token_secret = "…"
+### Migrating from config.toml
+
+If you previously ran Sentinel from a `backend/config.toml` (with a
+`backend/data/history.json`), import them into the database once — it copies the
+sources, poll interval and bandwidth history, and is safe to re-run:
+
+```bash
+cd backend && cargo run --release -- import-config
 ```
 
-Add more `[[proxmox]]` blocks for additional hosts. Self-signed certificates
-are accepted automatically.
+Afterwards the legacy files can be deleted.
 
 ## Run
 
-The quickest path — build the frontend and launch the backend (which serves it):
+The quickest path — start the database, build the frontend, and launch the
+backend (which serves the frontend):
 
 ```bash
 ./run.sh
 ```
 
-Then open <http://localhost:8787>.
+Then open <http://localhost:8787> and add your sources on the **Settings** page.
 
 Or step by step:
 
 ```bash
-# 1. Build the frontend bundle
-cd frontend
-bun install
-bun run build
+# 1. Start PostgreSQL + TimescaleDB
+docker compose up -d db
 
-# 2. Build & run the backend (serves API + frontend on :8787)
-cd ../backend
-cargo run --release
+# 2. Build the frontend bundle
+cd frontend && bun install && bun run build
+
+# 3. Build & run the backend (runs migrations, serves API + frontend on :8787)
+cd ../backend && cargo run --release
 ```
 
 ### Development mode
@@ -102,6 +112,7 @@ cargo run --release
 Run the backend and the Vite dev server separately for hot-reload:
 
 ```bash
+docker compose up -d db
 cd backend && cargo run                 # API on :8787
 cd frontend && bun run dev              # UI on :5173, proxies /api → :8787
 ```
@@ -113,19 +124,30 @@ cd frontend && bun run dev              # UI on :5173, proxies /api → :8787
 | `GET /api/snapshot` | The complete monitoring snapshot (all pages). |
 | `GET /api/health` | Source connectivity summary. |
 | `POST /api/alerts/action` | `{ "id": "...", "action": "ack" \| "resolve" \| "reopen" }` |
+| `GET /api/settings` | Polling/tuning settings and UI preferences. |
+| `PUT /api/settings` | Update any subset of the settings. |
+| `GET /api/sources` | Configured UniFi/Proxmox sources (secrets masked). |
+| `POST·PUT·DELETE /api/sources/{unifi,proxmox}[/{id}]` | Manage sources. |
+| `POST /api/sources/test` | Probe a source's connectivity. |
 
 ## Layout
 
 ```
 backend/    Rust monitoring backend (axum)
+  migrations/  PostgreSQL + TimescaleDB schema
   src/
     proxmox.rs   Proxmox VE API client
     unifi.rs     UniFi Integration API client
+    db.rs        PostgreSQL / TimescaleDB data access
+    config.rs    RuntimeConfig, loaded from the database
     engine.rs    Poller, aggregation, alert/event derivation
+    history.rs   In-memory metric working set
+    importer.rs  One-time config.toml / history.json import
     model.rs     JSON contract served to the frontend
     routes.rs    HTTP surface
 frontend/   React + TypeScript SPA (Vite + Bun)
   src/
-    pages/       Dashboard, Unifi, Proxmox, Alerts, Events
+    pages/       Dashboard, Unifi, Proxmox, Alerts, Events, Settings
     components.tsx, topology.tsx, api.ts, settings.tsx
+docker-compose.yml   TimescaleDB service
 ```

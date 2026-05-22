@@ -144,10 +144,10 @@ pub struct UnifiData {
 }
 
 impl UnifiClient {
-    pub fn new(cfg: &UnifiConfig) -> anyhow::Result<Self> {
+    pub fn new(cfg: &UnifiConfig, http_timeout_sec: u64) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
-            .timeout(std::time::Duration::from_secs(12))
+            .timeout(std::time::Duration::from_secs(http_timeout_sec.max(1)))
             .build()
             .context("building UniFi HTTP client")?;
         Ok(Self {

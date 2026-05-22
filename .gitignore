@@ -1,8 +1,7 @@
 backend/target/
-backend/data/
-backend/config.toml
 frontend/node_modules/
 frontend/dist/
+.env
 design/
 design.tar
 design_raw.bin
