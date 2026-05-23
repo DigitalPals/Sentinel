@@ -17,7 +17,7 @@ COPY frontend/ ./
 RUN bun run build
 
 # ---- backend -----------------------------------------------------------------
-FROM rust:1.83-bookworm AS backend
+FROM rust:1-bookworm AS backend
 WORKDIR /backend
 
 # Cache the dependency build by compiling against a stub main first.
