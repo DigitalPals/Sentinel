@@ -1,6 +1,7 @@
 // Cybex Sentinel — shared UI primitives + icon set.
 import React from "react";
 import type { Kpi, SourceHealth } from "./api";
+import logoUrl from "./assets/logo.svg";
 
 // ── Icon set ────────────────────────────────────────────────
 const ICONS: Record<string, React.ReactElement> = {
@@ -166,11 +167,7 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-mark" />
-        <div>
-          <div className="brand-name">Cybex Sentinel</div>
-          <div className="brand-tag">live monitor</div>
-        </div>
+        <img src={logoUrl} alt="Cybex Sentinel" className="brand-logo" />
       </div>
 
       <div className="nav-label">Monitoring</div>

@@ -96,10 +96,20 @@ textarea:focus-visible { outline: none; }
 .brand {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
-  padding: 4px 8px 18px;
+  box-sizing: border-box;
+  /* Match the topbar's height so this divider aligns with the topbar's bottom border. */
+  min-height: 52px;
+  padding: 0 4px;
   border-bottom: 1px solid var(--line);
-  margin-bottom: 12px;
+  margin-bottom: 10px;
+}
+.brand-logo {
+  display: block;
+  width: 100%;
+  max-width: 200px;
+  height: auto;
 }
 .brand-mark {
   width: 28px; height: 28px;
