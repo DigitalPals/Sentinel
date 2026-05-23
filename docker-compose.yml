@@ -1,10 +1,11 @@
-# TimescaleDB (PostgreSQL) — the backing store for Cybex Sentinel.
-# All settings, API credentials and metric history live here.
+# Cybex Sentinel — full stack (TimescaleDB + app) in Docker.
 #
-#   docker compose up -d db
+#   docker compose up -d            # build & run everything
+#   docker compose up -d db         # database only (for local Rust/Bun dev)
 #
-# The backend connects with the DATABASE_URL below by default; override the
-# DATABASE_URL environment variable to point at a different server.
+# The app image bundles the Rust backend and the built React frontend, and
+# serves both on :8787. It reaches the database over the compose network at
+# `db:5432`; override DATABASE_URL to point at a different server.
 services:
   db:
     image: timescale/timescaledb:2.17.2-pg16
@@ -13,7 +14,9 @@ services:
       POSTGRES_PASSWORD: sentinel
       POSTGRES_DB: sentinel
     ports:
-      - "5432:5432"
+      # Bound to localhost so the DB isn't exposed beyond the host — handy
+      # for `psql` from the host without making it world-reachable.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -21,6 +24,20 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgres://sentinel:sentinel@db:5432/sentinel
+      RUST_LOG: cybex_sentinel=info,tower_http=warn
+    ports:
+      - "8787:8787"
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

@@ -50,11 +50,11 @@ as the backend runs.
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs) (stable) — `rustup default stable`
-- [Bun](https://bun.sh) ≥ 1.3
-- [Docker](https://docs.docker.com/get-docker/) — runs the bundled PostgreSQL +
-  TimescaleDB container. (Or bring your own PostgreSQL ≥ 14 with the TimescaleDB
-  extension installed.)
+- [Docker](https://docs.docker.com/get-docker/) (with Compose) — enough on its
+  own to run the full stack.
+- For local development without containers: [Rust](https://rustup.rs) (stable)
+  and [Bun](https://bun.sh) ≥ 1.3. (Bring your own PostgreSQL ≥ 14 with the
+  TimescaleDB extension if you don't want the bundled `db` container.)
 
 ## Configuration
 
@@ -65,8 +65,10 @@ Proxmox endpoints and adjust everything else from the in-app **Settings** page
 (backed by the `/api/settings` and `/api/sources` endpoints).
 
 The one thing that cannot live in the database is the database's own address.
-The backend reads it from the `DATABASE_URL` environment variable, defaulting to
-the bundled container — `postgres://sentinel:sentinel@localhost:5432/sentinel`.
+The backend reads it from the `DATABASE_URL` environment variable. The compose
+file sets it to `postgres://sentinel:sentinel@db:5432/sentinel`; running the
+backend directly on the host instead defaults to
+`postgres://sentinel:sentinel@localhost:5432/sentinel`.
 
 Self-signed certificates on the monitored UniFi/Proxmox hosts are accepted
 automatically.
@@ -85,14 +87,40 @@ Afterwards the legacy files can be deleted.
 
 ## Run
 
-The quickest path — start the database, build the frontend, and launch the
-backend (which serves the frontend):
+The quickest path — build and start everything (database + app) in Docker:
+
+```bash
+docker compose up -d --build
+```
+
+Then open <http://localhost:8787> and add your sources on the **Settings** page.
+
+The `app` image is a multi-stage build: it compiles the Rust backend, builds
+the Vite/React bundle with Bun, and ships a slim runtime image that serves
+both on port 8787. The TimescaleDB volume (`pgdata`) persists across rebuilds.
+
+To rebuild only the app after a code change:
+
+```bash
+docker compose up -d --build app
+```
+
+Logs and shutdown:
+
+```bash
+docker compose logs -f app
+docker compose down              # stop containers, keep data
+docker compose down -v           # also drop the pgdata volume
+```
+
+### Local (non-Docker) run
+
+If you'd rather build and run on the host, with only the database in a
+container, `run.sh` does it end-to-end:
 
 ```bash
 ./run.sh
 ```
-
-Then open <http://localhost:8787> and add your sources on the **Settings** page.
 
 Or step by step:
 
@@ -149,5 +177,6 @@ frontend/   React + TypeScript SPA (Vite + Bun)
   src/
     pages/       Dashboard, Unifi, Proxmox, Alerts, Events, Settings
     components.tsx, topology.tsx, api.ts, settings.tsx
-docker-compose.yml   TimescaleDB service
+Dockerfile           Multi-stage build: frontend (Bun) + backend (Rust) → slim runtime
+docker-compose.yml   TimescaleDB + app services
 ```
