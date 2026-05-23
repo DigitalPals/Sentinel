@@ -23,6 +23,9 @@ use crate::config::{
 };
 use crate::db;
 use crate::engine::{patch_alerts, AppState};
+use crate::notify::{
+    self, NotificationChannel, NotificationSettingsPublic, NotificationSettingsUpdate,
+};
 use crate::proxmox::ProxmoxClient;
 use crate::unifi::UnifiClient;
 use crate::unraid::UnraidClient;
@@ -43,6 +46,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/health", get(health))
         .route("/api/alerts/action", post(alert_action))
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/notifications/test", post(test_notification))
         .route("/api/sources", get(get_sources))
         .route("/api/sources/test", post(test_source))
         .route("/api/sources/unifi", post(create_unifi))
@@ -175,6 +179,7 @@ struct SettingsResponse {
     frontend_poll_ms: u64,
     thresholds: AlertThresholds,
     ui: UiPrefs,
+    notifications: NotificationSettingsPublic,
 }
 
 fn settings_response(c: &RuntimeConfig) -> SettingsResponse {
@@ -187,6 +192,7 @@ fn settings_response(c: &RuntimeConfig) -> SettingsResponse {
         frontend_poll_ms: c.frontend_poll_ms,
         thresholds: c.thresholds.clone(),
         ui: c.ui_prefs.clone(),
+        notifications: c.notifications.public(),
     }
 }
 
@@ -206,6 +212,7 @@ struct SettingsUpdate {
     frontend_poll_ms: Option<u64>,
     thresholds: Option<AlertThresholds>,
     ui: Option<UiPrefs>,
+    notifications: Option<NotificationSettingsUpdate>,
 }
 
 /// Update one or more settings. Changes take effect on the next poll; `bind`
@@ -241,8 +248,39 @@ async fn put_settings(
         let value = serde_json::to_value(v).map_err(|e| anyhow::anyhow!(e))?;
         db::set_setting(pool, "ui_prefs", &value).await?;
     }
+    if let Some(v) = req.notifications {
+        let mut notifications = state.config().notifications.clone();
+        notifications.apply_update(v);
+        let value = serde_json::to_value(notifications).map_err(|e| anyhow::anyhow!(e))?;
+        db::set_setting(pool, "notifications", &value).await?;
+    }
     refresh_config(&state).await?;
     Ok(Json(settings_response(&state.config())))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NotificationTestReq {
+    channel: NotificationChannel,
+    notifications: Option<NotificationSettingsUpdate>,
+}
+
+/// Send a test notification using the saved configuration plus any unsaved
+/// form edits supplied by the client. The candidate config is not persisted.
+async fn test_notification(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<NotificationTestReq>,
+) -> ApiResult<serde_json::Value> {
+    let mut notifications = state.config().notifications.clone();
+    if let Some(update) = req.notifications {
+        notifications.apply_update(update);
+    }
+    notify::send_test_notification(&notifications, &req.channel)
+        .await
+        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
+    Ok(Json(
+        json!({ "ok": true, "detail": "Test notification sent." }),
+    ))
 }
 
 // ── Sources ─────────────────────────────────────────────────────────────────

@@ -37,14 +37,16 @@ In particular, it tells you:
   task history and UniFi device events.
 - **Should I be doing something about this?** — threshold-derived alerts with an
   acknowledge / resolve workflow, so the red dot in the corner means something.
+- **Can it reach me somewhere else?** — warning and critical alerts can be sent
+  through SMTP email, Slack incoming webhooks and Telegram bot messages.
 
 No mock data anywhere. If a number is on screen, something somewhere actually
 said that number out loud over HTTP.
 
 ## The stack, briefly
 
-- **Backend** — Rust (axum + tokio + reqwest). One process. Polls everything,
-  serves the API, serves the frontend, holds your beer.
+- **Backend** — Rust (axum + tokio + reqwest + lettre). One process. Polls
+  everything, serves the API, serves the frontend, holds your beer.
 - **Frontend** — React + TypeScript, built with Vite, packaged with Bun. Dark
   theme by default because we have eyes.
 - **Storage** — PostgreSQL + TimescaleDB. All settings, all credentials and the
@@ -116,9 +118,9 @@ cd frontend && bun run dev                       # UI on :5173, proxies /api →
 ## Configuration
 
 There is no config file. Everything — sources, API credentials, polling
-intervals, alert thresholds, UI preferences — lives in the database and is
-edited from the in-app **Settings** page. Changes take effect on the next poll
-cycle, no restart needed.
+intervals, alert thresholds, notification channels, UI preferences — lives in
+the database and is edited from the in-app **Settings** page. Changes take
+effect on the next poll cycle, no restart needed.
 
 The one exception is the database's own address, because the backend has to
 find the database before it can read its own settings (chicken / egg). That
@@ -127,6 +129,36 @@ to `postgres://sentinel:sentinel@db:5432/sentinel`.
 
 Self-signed certs on your Unraid/UniFi/Proxmox hosts are accepted automatically,
 because that is the reality of homelab gear.
+
+## Notifications
+
+Sentinel sends outbound notifications when an alert newly opens or when a
+cleared alert fires again. It does not send the same still-active alert on every
+poll. Configure channels under **Settings -> Notifications** and use the test
+button for each channel before relying on it.
+
+Supported channels:
+
+- **Email** — SMTP host, port, STARTTLS, implicit TLS or plain SMTP, optional
+  username and password, sender address and one or more recipients.
+- **Slack** — an incoming webhook URL from your Slack app.
+- **Telegram** — a bot token plus the chat ID that should receive messages.
+
+Telegram setup:
+
+1. In Telegram, start a chat with `@BotFather`.
+2. Send `/newbot`, choose a name and username, then copy the bot token.
+3. Start a direct chat with the new bot, or add it to the target group.
+4. Send a message to that chat.
+5. Open `https://api.telegram.org/bot<token>/getUpdates` in a browser, replacing
+   `<token>` with the token from BotFather.
+6. Find `message.chat.id` in the JSON response. Group and supergroup IDs are
+   usually negative numbers; supergroups commonly start with `-100`.
+7. Enter the bot token and chat ID in **Settings -> Notifications -> Telegram**,
+   save, then press **Test Telegram**.
+
+Notification secrets are stored in PostgreSQL and are masked in the API response
+after saving. Treat database backups the same way you treat source API keys.
 
 ## Data sources
 
@@ -153,7 +185,8 @@ because that is the reality of homelab gear.
   by default (so plain-HTTP LAN deployments still work). If you put Sentinel
   behind TLS, set `SENTINEL_SECURE_COOKIES=1` on the backend.
 - Unraid/UniFi/Proxmox credentials are stored as plaintext columns in PostgreSQL —
-  same exposure as the old `config.toml` they replaced. Treat the database
+  same exposure as the old `config.toml` they replaced. Notification secrets
+  are stored in the same database-backed settings table. Treat the database
   accordingly.
 
 ## Layout
@@ -170,6 +203,7 @@ backend/    Rust monitoring backend (axum)
     engine.rs    Poller, aggregation, alert/event derivation
     history.rs   In-memory metric working set
     auth.rs      Argon2 + session cookies
+    notify.rs    Email, Slack and Telegram alert delivery
     importer.rs  One-time legacy config.toml import
     model.rs     JSON contract served to the frontend
     routes.rs    HTTP surface
@@ -187,7 +221,6 @@ Roughly, in vague order of "things that bug me most when I open it":
 
 - More alert rule types beyond static thresholds
 - Per-source health diagnostics that are actually helpful when a source goes red
-- Notifications (email / webhook) for alerts you don't want to miss
 - More than one user account, maybe with read-only viewers
 - Retention controls in the UI for the metric history
 - Whatever else turns out to be obviously missing the next time something

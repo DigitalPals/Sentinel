@@ -344,6 +344,35 @@ export interface UiPrefs {
   showSpark: boolean;
 }
 
+export interface EmailNotificationSettings {
+  enabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUsername: string;
+  hasPassword: boolean;
+  smtpSecurity: string;
+  from: string;
+  to: string[];
+}
+
+export interface SlackNotificationSettings {
+  enabled: boolean;
+  hasWebhookUrl: boolean;
+}
+
+export interface TelegramNotificationSettings {
+  enabled: boolean;
+  hasBotToken: boolean;
+  chatId: string;
+}
+
+export interface NotificationSettings {
+  minSeverity: string;
+  email: EmailNotificationSettings;
+  slack: SlackNotificationSettings;
+  telegram: TelegramNotificationSettings;
+}
+
 export interface AppSettings {
   pollIntervalSec: number;
   bind: string;
@@ -354,6 +383,7 @@ export interface AppSettings {
   /** Alert thresholds, keyed by rule name (e.g. `guest_mem_crit`). */
   thresholds: Record<string, number>;
   ui: UiPrefs;
+  notifications: NotificationSettings;
 }
 
 export interface UnifiSource {

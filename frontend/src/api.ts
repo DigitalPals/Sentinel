@@ -22,6 +22,7 @@ export type {
   Kpi,
   NodeGuests,
   NodeTile,
+  NotificationSettings,
   PortOut,
   ProxmoxSource,
   ProxmoxView,
@@ -137,6 +138,19 @@ export async function putSettings(patch: Record<string, unknown>): Promise<AppSe
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
+    }),
+  );
+}
+
+export async function testNotification(
+  channel: "email" | "slack" | "telegram",
+  notifications: Record<string, unknown>,
+): Promise<TestResult> {
+  return jsonOrThrow(
+    await apiFetch("/api/notifications/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, notifications }),
     }),
   );
 }

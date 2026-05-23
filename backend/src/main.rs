@@ -13,6 +13,7 @@ mod engine;
 mod history;
 mod importer;
 mod model;
+mod notify;
 mod proxmox;
 mod routes;
 mod unifi;

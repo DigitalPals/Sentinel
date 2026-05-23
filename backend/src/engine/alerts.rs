@@ -17,6 +17,7 @@ struct AlertMeta {
     assignee: Option<String>,
     present: bool,
     present_before: bool,
+    loaded_from_db: bool,
 }
 
 #[derive(Default)]
@@ -36,15 +37,21 @@ pub(super) struct Candidate {
     pub rule: String,
 }
 
+pub(super) struct ReconciledAlerts {
+    pub alerts: Vec<Alert>,
+    pub newly_active: Vec<Alert>,
+}
+
 impl AlertStore {
     /// Reconcile freshly-derived candidates with tracked state, returning the
     /// alert list with stable ages, re-fire counts and workflow statuses.
-    pub(super) fn reconcile(&mut self, cands: &[Candidate], now: i64) -> Vec<Alert> {
+    pub(super) fn reconcile(&mut self, cands: &[Candidate], now: i64) -> ReconciledAlerts {
         for m in self.map.values_mut() {
             m.present_before = m.present;
             m.present = false;
         }
         let mut out = Vec::new();
+        let mut newly_active = Vec::new();
         for c in cands {
             let meta = self.map.entry(c.key.clone()).or_insert(AlertMeta {
                 first_seen: now,
@@ -54,17 +61,22 @@ impl AlertStore {
                 assignee: None,
                 present: false,
                 present_before: false,
+                loaded_from_db: false,
             });
-            if !meta.present_before {
+            let persisted_continuation =
+                meta.loaded_from_db && !meta.present_before && now - meta.last_seen < 1800;
+            let became_present = !meta.present_before && !persisted_continuation;
+            if became_present {
                 meta.occurrences += 1;
-                if meta.status == "resolved" {
+                if meta.status != "open" {
                     meta.status = "open".to_string();
                     meta.assignee = None;
                 }
             }
             meta.present = true;
+            meta.loaded_from_db = false;
             meta.last_seen = now;
-            out.push(Alert {
+            let alert = Alert {
                 id: c.key.clone(),
                 sev: c.sev.clone(),
                 status: meta.status.clone(),
@@ -77,12 +89,19 @@ impl AlertStore {
                 occurrences: meta.occurrences,
                 assignee: meta.assignee.clone(),
                 rule: c.rule.clone(),
-            });
+            };
+            if became_present {
+                newly_active.push(alert.clone());
+            }
+            out.push(alert);
         }
         // Drop conditions that cleared more than 30 minutes ago.
         self.map
             .retain(|_, m| m.present || now - m.last_seen < 1800);
-        out
+        ReconciledAlerts {
+            alerts: out,
+            newly_active,
+        }
     }
 
     /// Current workflow status and assignee for an alert, if tracked.
@@ -127,6 +146,7 @@ impl AlertStore {
                     assignee: r.assignee,
                     present: false,
                     present_before: false,
+                    loaded_from_db: true,
                 },
             );
         }
@@ -258,13 +278,15 @@ mod tests {
     fn reconcile_preserves_ack_and_age_for_persistent_alerts() {
         let mut store = AlertStore::default();
         let first = store.reconcile(&[candidate("a")], 1_000);
-        assert_eq!(first[0].occurrences, 1);
+        assert_eq!(first.alerts[0].occurrences, 1);
+        assert_eq!(first.newly_active.len(), 1);
         assert!(store.apply("a", "ack"));
 
         let second = store.reconcile(&[candidate("a")], 1_120);
-        assert_eq!(second[0].status, "ack");
-        assert_eq!(second[0].age_min, 2);
-        assert_eq!(second[0].occurrences, 1);
+        assert_eq!(second.alerts[0].status, "ack");
+        assert_eq!(second.alerts[0].age_min, 2);
+        assert_eq!(second.alerts[0].occurrences, 1);
+        assert!(second.newly_active.is_empty());
     }
 
     #[test]
@@ -275,8 +297,27 @@ mod tests {
         store.reconcile(&[], 1_060);
 
         let fired = store.reconcile(&[candidate("a")], 1_120);
-        assert_eq!(fired[0].status, "open");
-        assert_eq!(fired[0].occurrences, 2);
+        assert_eq!(fired.alerts[0].status, "open");
+        assert_eq!(fired.alerts[0].occurrences, 2);
+        assert_eq!(fired.newly_active.len(), 1);
+    }
+
+    #[test]
+    fn recent_persisted_alert_does_not_refire_on_startup() {
+        let mut store = AlertStore::from_rows(vec![AlertStateRow {
+            alert_key: "a".to_string(),
+            first_seen: 1_000,
+            last_seen: 1_120,
+            occurrences: 1,
+            status: "ack".to_string(),
+            assignee: Some("ops".to_string()),
+        }]);
+
+        let restored = store.reconcile(&[candidate("a")], 1_140);
+
+        assert!(restored.newly_active.is_empty());
+        assert_eq!(restored.alerts[0].status, "ack");
+        assert_eq!(restored.alerts[0].occurrences, 1);
     }
 
     #[test]

@@ -23,6 +23,7 @@ sha2 = "0.10"
 # the session cookie's Max-Age.
 time = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"

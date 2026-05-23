@@ -33,6 +33,7 @@ use crate::config::RuntimeConfig;
 use crate::db;
 use crate::history::{History, Sample};
 use crate::model::*;
+use crate::notify;
 use crate::proxmox::{ProxmoxClient, ProxmoxData};
 use crate::unifi::{UnifiClient, UnifiData};
 use crate::unraid::{UnraidClient, UnraidData};
@@ -177,7 +178,7 @@ async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
         unifi_fut
     );
 
-    let (snapshot, sample) = {
+    let (snapshot, sample, notifications) = {
         let mut history = state.history.write().unwrap();
         let mut store = state.alerts.write().unwrap();
         build(cfg, &pmx, &unraid_res, &unifi_res, &mut history, &mut store)
@@ -202,6 +203,12 @@ async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
     );
 
     *state.snapshot.write().unwrap() = Arc::new(snapshot);
+
+    if !notifications.is_empty() {
+        if let Err(e) = notify::send_alert_notifications(&cfg.notifications, &notifications).await {
+            tracing::warn!("could not send alert notification(s): {e:#}");
+        }
+    }
 }
 
 fn build(
@@ -211,7 +218,7 @@ fn build(
     unifi: &Option<Result<UnifiData, String>>,
     history: &mut History,
     store: &mut AlertStore,
-) -> (Snapshot, Sample) {
+) -> (Snapshot, Sample, Vec<Alert>) {
     let now = Utc::now().timestamp();
     let mut sources: Vec<SourceHealth> = Vec::new();
 
@@ -367,7 +374,9 @@ fn build(
 
     // ── Alerts ───────────────────────────────────────────────────────────
     cands.sort_by(|a, b| sev_rank(&a.sev).cmp(&sev_rank(&b.sev)));
-    let mut alerts = store.reconcile(&cands, now);
+    let reconciled = store.reconcile(&cands, now);
+    let notifications = reconciled.newly_active.clone();
+    let mut alerts = reconciled.alerts;
     alerts.sort_by(|a, b| {
         sev_rank(&a.sev)
             .cmp(&sev_rank(&b.sev))
@@ -674,5 +683,5 @@ fn build(
         alerts: alerts_view,
         events: events_view,
     };
-    (snapshot, sample)
+    (snapshot, sample, notifications)
 }
