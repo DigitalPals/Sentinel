@@ -75,6 +75,29 @@ pub async fn setup_timescale(pool: &PgPool) {
     }
 }
 
+/// Apply the configured raw-sample retention window.
+///
+/// The original migration seeds a 30-day retention policy. This replaces that
+/// policy with the current database-backed setting so Settings -> Polling &
+/// Tuning changes affect TimescaleDB immediately.
+pub async fn configure_metric_retention(pool: &PgPool, days: i64) -> anyhow::Result<()> {
+    let days = days.max(1).min(i32::MAX as i64) as i32;
+    sqlx::query("SELECT remove_retention_policy('metric_samples', if_exists => TRUE)")
+        .execute(pool)
+        .await
+        .context("removing metric sample retention policy")?;
+    sqlx::query(
+        "SELECT add_retention_policy(\
+         'metric_samples', make_interval(days => $1::int), if_not_exists => TRUE)",
+    )
+    .bind(days)
+    .execute(pool)
+    .await
+    .with_context(|| format!("setting metric sample retention to {days} day(s)"))?;
+    tracing::info!("metric sample retention set to {days} day(s)");
+    Ok(())
+}
+
 // ── Settings ────────────────────────────────────────────────────────────────
 
 /// All rows of the `settings` table as a key → JSON map.
@@ -85,13 +108,20 @@ pub async fn get_settings_map(pool: &PgPool) -> anyhow::Result<HashMap<String, s
         .context("loading settings")?;
     let mut map = HashMap::with_capacity(rows.len());
     for row in rows {
-        map.insert(row.get::<String, _>("key"), row.get::<serde_json::Value, _>("value"));
+        map.insert(
+            row.get::<String, _>("key"),
+            row.get::<serde_json::Value, _>("value"),
+        );
     }
     Ok(map)
 }
 
 /// Insert or update one setting.
-pub async fn set_setting(pool: &PgPool, key: &str, value: &serde_json::Value) -> anyhow::Result<()> {
+pub async fn set_setting(
+    pool: &PgPool,
+    key: &str,
+    value: &serde_json::Value,
+) -> anyhow::Result<()> {
     sqlx::query(
         "INSERT INTO settings (key, value, updated_at) VALUES ($1, $2::jsonb, now()) \
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
@@ -208,7 +238,10 @@ pub async fn get_proxmox_sources(pool: &PgPool) -> anyhow::Result<Vec<ProxmoxSou
     .context("loading Proxmox sources")
 }
 
-pub async fn get_proxmox_source(pool: &PgPool, id: i64) -> anyhow::Result<Option<ProxmoxSourceRow>> {
+pub async fn get_proxmox_source(
+    pool: &PgPool,
+    id: i64,
+) -> anyhow::Result<Option<ProxmoxSourceRow>> {
     sqlx::query_as::<_, ProxmoxSourceRow>(
         "SELECT id, name, host, token_id, token_secret, enabled FROM proxmox_sources WHERE id = $1",
     )
@@ -302,18 +335,26 @@ pub async fn count_users(pool: &PgPool) -> anyhow::Result<i64> {
     Ok(row.get::<i64, _>("n"))
 }
 
-pub async fn insert_user(pool: &PgPool, username: &str, password_hash: &str) -> anyhow::Result<i64> {
-    let row = sqlx::query("INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id")
-        .bind(username)
-        .bind(password_hash)
-        .fetch_one(pool)
-        .await
-        .context("inserting user")?;
+pub async fn insert_user(
+    pool: &PgPool,
+    username: &str,
+    password_hash: &str,
+) -> anyhow::Result<i64> {
+    let row =
+        sqlx::query("INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id")
+            .bind(username)
+            .bind(password_hash)
+            .fetch_one(pool)
+            .await
+            .context("inserting user")?;
     Ok(row.get("id"))
 }
 
 /// Look up a user by name, case-insensitively.
-pub async fn get_user_by_username(pool: &PgPool, username: &str) -> anyhow::Result<Option<UserRow>> {
+pub async fn get_user_by_username(
+    pool: &PgPool,
+    username: &str,
+) -> anyhow::Result<Option<UserRow>> {
     sqlx::query_as::<_, UserRow>(
         "SELECT id, username, password_hash FROM users WHERE lower(username) = lower($1)",
     )
@@ -496,7 +537,10 @@ pub async fn load_alert_state(pool: &PgPool) -> anyhow::Result<Vec<AlertStateRow
 /// Replace the persisted alert state with `rows` (the live tracked set). Done in
 /// one transaction so a restart always sees a consistent picture.
 pub async fn save_alert_state(pool: &PgPool, rows: &[AlertStateRow]) -> anyhow::Result<()> {
-    let mut tx = pool.begin().await.context("begin alert-state transaction")?;
+    let mut tx = pool
+        .begin()
+        .await
+        .context("begin alert-state transaction")?;
     sqlx::query("DELETE FROM alert_state")
         .execute(&mut *tx)
         .await
@@ -516,7 +560,9 @@ pub async fn save_alert_state(pool: &PgPool, rows: &[AlertStateRow]) -> anyhow::
         .await
         .context("writing alert state")?;
     }
-    tx.commit().await.context("commit alert-state transaction")?;
+    tx.commit()
+        .await
+        .context("commit alert-state transaction")?;
     Ok(())
 }
 

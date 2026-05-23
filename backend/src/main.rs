@@ -62,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
     if config.unifi.is_none() && config.proxmox.is_empty() {
         tracing::warn!("no sources configured yet — add them on the Settings page");
     }
+    db::configure_metric_retention(&pool, config.history_retention_days).await?;
 
     let clients = build_clients(&config);
     let history = history::History::new(

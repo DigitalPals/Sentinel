@@ -46,7 +46,9 @@ struct LegacyHistory {
 pub async fn run(pool: &PgPool) -> anyhow::Result<()> {
     import_config(pool).await?;
     import_history(pool).await?;
-    tracing::info!("import-config complete — the legacy config.toml and data/history.json may now be removed");
+    tracing::info!(
+        "import-config complete — the legacy config.toml and data/history.json may now be removed"
+    );
     Ok(())
 }
 

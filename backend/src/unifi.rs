@@ -173,13 +173,19 @@ impl UnifiClient {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            anyhow::bail!("{url} returned HTTP {status}: {}", body.chars().take(200).collect::<String>());
+            anyhow::bail!(
+                "{url} returned HTTP {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
         }
         serde_json::from_str(&body).with_context(|| format!("decoding {url}"))
     }
 
     /// Fetch every page of a paginated collection.
-    async fn get_all<T: serde::de::DeserializeOwned>(&self, base_path: &str) -> anyhow::Result<Vec<T>> {
+    async fn get_all<T: serde::de::DeserializeOwned>(
+        &self,
+        base_path: &str,
+    ) -> anyhow::Result<Vec<T>> {
         let mut out: Vec<T> = Vec::new();
         let mut offset = 0;
         let limit = 200;
@@ -236,10 +242,7 @@ impl UnifiClient {
                 let site_id = site.id.clone();
                 async move {
                     let detail = this
-                        .get_json::<DeviceDetail>(&format!(
-                            "/sites/{site_id}/devices/{}",
-                            item.id
-                        ))
+                        .get_json::<DeviceDetail>(&format!("/sites/{site_id}/devices/{}", item.id))
                         .await
                         .unwrap_or_default();
                     let stats = this

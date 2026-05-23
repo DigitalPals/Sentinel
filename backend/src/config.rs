@@ -108,10 +108,13 @@ impl RuntimeConfig {
         let proxmox_rows = db::get_proxmox_sources(pool).await?;
 
         // The engine drives a single UniFi controller; use the first enabled one.
-        let unifi = unifi_rows.into_iter().find(|r| r.enabled).map(|r| UnifiConfig {
-            host: r.host,
-            api_key: r.api_key,
-        });
+        let unifi = unifi_rows
+            .into_iter()
+            .find(|r| r.enabled)
+            .map(|r| UnifiConfig {
+                host: r.host,
+                api_key: r.api_key,
+            });
         let proxmox = proxmox_rows
             .into_iter()
             .filter(|r| r.enabled)
@@ -128,7 +131,7 @@ impl RuntimeConfig {
             bind: setting(&map, "bind", "0.0.0.0:8787".to_string()),
             http_timeout_sec: setting(&map, "http_timeout_sec", 12),
             history_max_samples: setting(&map, "history_max_samples", 6000usize),
-            history_retention_days: setting(&map, "history_retention_days", 30i64),
+            history_retention_days: setting(&map, "history_retention_days", 30i64).max(1),
             frontend_poll_ms: setting(&map, "frontend_poll_ms", 5000),
             thresholds: setting(&map, "alert_thresholds", AlertThresholds::default()),
             ui_prefs: setting(&map, "ui_prefs", UiPrefs::default()),

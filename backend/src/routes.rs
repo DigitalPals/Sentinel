@@ -61,9 +61,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     // No CORS layer: the backend serves its own SPA (same-origin), and the dev
     // proxy makes requests same-origin too. A wildcard origin would, in any
     // case, be rejected by browsers on the credentialed (cookie) requests.
-    let api = public
-        .merge(protected)
-        .layer(TraceLayer::new_for_http());
+    let api = public.merge(protected).layer(TraceLayer::new_for_http());
 
     match resolve_frontend_dir() {
         Some(dir) => {
@@ -109,6 +107,7 @@ fn not_found(msg: impl Into<String>) -> ApiError {
 /// immediately, without waiting for the next poll cycle.
 async fn refresh_config(state: &AppState) -> Result<(), ApiError> {
     let cfg = RuntimeConfig::load(&state.pool).await?;
+    db::configure_metric_retention(&state.pool, cfg.history_retention_days).await?;
     *state.config.write().unwrap() = Arc::new(cfg);
     Ok(())
 }
@@ -221,7 +220,7 @@ async fn put_settings(
         db::set_setting(pool, "history_max_samples", &json!(v.max(1))).await?;
     }
     if let Some(v) = req.history_retention_days {
-        db::set_setting(pool, "history_retention_days", &json!(v)).await?;
+        db::set_setting(pool, "history_retention_days", &json!(v.max(1))).await?;
     }
     if let Some(v) = req.frontend_poll_ms {
         db::set_setting(pool, "frontend_poll_ms", &json!(v.max(500))).await?;
@@ -397,7 +396,9 @@ async fn create_proxmox(
         .iter()
         .any(|r| r.name == name);
     if taken {
-        return Err(bad_request(format!("a Proxmox source named '{name}' already exists")));
+        return Err(bad_request(format!(
+            "a Proxmox source named '{name}' already exists"
+        )));
     }
     let id = db::insert_proxmox_source(
         &state.pool,
@@ -502,7 +503,11 @@ async fn test_source(
             Ok(Json(match client.collect().await {
                 Ok(d) => TestResult {
                     ok: true,
-                    detail: format!("UniFi Network {} · {} device(s)", d.app_version, d.devices.len()),
+                    detail: format!(
+                        "UniFi Network {} · {} device(s)",
+                        d.app_version,
+                        d.devices.len()
+                    ),
                 },
                 Err(e) => TestResult {
                     ok: false,

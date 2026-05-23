@@ -118,7 +118,10 @@ impl ProxmoxClient {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            anyhow::bail!("{url} returned HTTP {status}: {}", body.chars().take(200).collect::<String>());
+            anyhow::bail!(
+                "{url} returned HTTP {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
         }
         let parsed: PveResp<T> =
             serde_json::from_str(&body).with_context(|| format!("decoding {url}"))?;

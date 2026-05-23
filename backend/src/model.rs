@@ -271,3 +271,96 @@ pub struct Snapshot {
     pub alerts: AlertsView,
     pub events: EventsView,
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use serde::Serialize;
+    use serde_json::Value;
+
+    use super::*;
+
+    fn keys<T: Serialize>(value: &T) -> BTreeSet<String> {
+        let Value::Object(map) = serde_json::to_value(value).expect("serializes") else {
+            panic!("expected JSON object");
+        };
+        map.keys().cloned().collect()
+    }
+
+    fn assert_keys<T: Serialize>(value: &T, expected: &[&str]) {
+        let got = keys(value);
+        let expected: BTreeSet<String> = expected.iter().map(|k| k.to_string()).collect();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn snapshot_contract_uses_frontend_field_names() {
+        assert_keys(
+            &Snapshot::default(),
+            &[
+                "generatedAt",
+                "pollIntervalSec",
+                "sources",
+                "dashboard",
+                "proxmox",
+                "unifi",
+                "topology",
+                "alerts",
+                "events",
+            ],
+        );
+        assert!(!keys(&Snapshot::default()).contains("generated_at"));
+    }
+
+    #[test]
+    fn nested_contract_uses_camel_case_for_renamed_fields() {
+        assert_keys(
+            &NodeTile::default(),
+            &[
+                "name", "server", "host", "status", "cpu", "mem", "disk", "net", "netMbps",
+                "guests", "model", "uptime",
+            ],
+        );
+        assert_keys(
+            &UniDeviceOut::default(),
+            &[
+                "id",
+                "name",
+                "kind",
+                "model",
+                "ip",
+                "mac",
+                "status",
+                "uptime",
+                "clients",
+                "txMbps",
+                "rxMbps",
+                "fw",
+                "site",
+                "cpu",
+                "mem",
+                "firmwareUpdatable",
+                "ports",
+                "radios",
+            ],
+        );
+        assert_keys(
+            &Alert::default(),
+            &[
+                "id",
+                "sev",
+                "status",
+                "title",
+                "desc",
+                "source",
+                "host",
+                "target",
+                "ageMin",
+                "occurrences",
+                "assignee",
+                "rule",
+            ],
+        );
+    }
+}
