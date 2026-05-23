@@ -1586,6 +1586,66 @@ html.is-scrolling * { scrollbar-color: var(--line-2) transparent; }
 .density-comfy .detail-grid { padding: 18px 22px; }
 
 /* ════════════════════════════════════════════════════════════════
+ * Settings page — two-column layout: left-rail nav + content
+ * ════════════════════════════════════════════════════════════════ */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 84px;
+  background: var(--surf);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 8px;
+}
+.settings-nav-item {
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--fg-1);
+  padding: 9px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  transition: background .12s, color .12s;
+}
+.settings-nav-item:hover { background: var(--surf-1); color: var(--fg); }
+.settings-nav-item.active {
+  background: linear-gradient(90deg, var(--accent-soft) 0%, transparent 100%);
+  color: var(--fg);
+  box-shadow: inset 2px 0 0 var(--accent);
+  font-weight: 600;
+}
+.settings-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+@media (max-width: 900px) {
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-nav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 6px;
+  }
+  .settings-nav-item { flex: 0 0 auto; white-space: nowrap; }
+  .settings-nav-item.active {
+    background: transparent;
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
  * Settings page — sources, tuning, thresholds forms
  * ════════════════════════════════════════════════════════════════ */
 .set-banner {
