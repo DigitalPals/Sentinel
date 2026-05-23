@@ -16,6 +16,7 @@ mod model;
 mod proxmox;
 mod routes;
 mod unifi;
+mod unraid;
 
 use std::sync::{Arc, RwLock};
 
@@ -51,15 +52,16 @@ async fn main() -> anyhow::Result<()> {
 
     let config = RuntimeConfig::load(&pool).await?;
     tracing::info!(
-        "config loaded — {} Proxmox source(s), UniFi {}",
+        "config loaded — {} Proxmox source(s), {} Unraid source(s), UniFi {}",
         config.proxmox.len(),
+        config.unraid.len(),
         if config.unifi.is_some() {
             "configured"
         } else {
             "not configured"
         },
     );
-    if config.unifi.is_none() && config.proxmox.is_empty() {
+    if config.unifi.is_none() && config.proxmox.is_empty() && config.unraid.is_empty() {
         tracing::warn!("no sources configured yet — add them on the Settings page");
     }
     db::configure_metric_retention(&pool, config.history_retention_days).await?;

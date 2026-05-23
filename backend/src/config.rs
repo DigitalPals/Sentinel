@@ -32,8 +32,17 @@ pub struct ProxmoxConfig {
     pub token_secret: String,
 }
 
+/// Connection details for an Unraid GraphQL API endpoint.
+#[derive(Debug, Clone, Hash)]
+pub struct UnraidConfig {
+    pub name: String,
+    pub host: String,
+    pub api_key: String,
+}
+
 /// Threshold values that drive the alert rules in the engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AlertThresholds {
     pub guest_mem_crit: u32,
     pub guest_mem_warn: u32,
@@ -46,6 +55,12 @@ pub struct AlertThresholds {
     pub node_disk_warn: u32,
     pub unifi_cpu_warn: u32,
     pub unifi_mem_warn: u32,
+    pub unraid_cpu_warn: u32,
+    pub unraid_mem_warn: u32,
+    pub unraid_array_warn: u32,
+    pub unraid_disk_warn: u32,
+    pub unraid_temp_warn: u32,
+    pub unraid_temp_crit: u32,
 }
 
 impl Default for AlertThresholds {
@@ -62,6 +77,12 @@ impl Default for AlertThresholds {
             node_disk_warn: 90,
             unifi_cpu_warn: 90,
             unifi_mem_warn: 92,
+            unraid_cpu_warn: 90,
+            unraid_mem_warn: 90,
+            unraid_array_warn: 85,
+            unraid_disk_warn: 90,
+            unraid_temp_warn: 55,
+            unraid_temp_crit: 65,
         }
     }
 }
@@ -98,6 +119,7 @@ pub struct RuntimeConfig {
     pub ui_prefs: UiPrefs,
     pub unifi: Option<UnifiConfig>,
     pub proxmox: Vec<ProxmoxConfig>,
+    pub unraid: Vec<UnraidConfig>,
 }
 
 impl RuntimeConfig {
@@ -106,6 +128,7 @@ impl RuntimeConfig {
         let map = db::get_settings_map(pool).await?;
         let unifi_rows = db::get_unifi_sources(pool).await?;
         let proxmox_rows = db::get_proxmox_sources(pool).await?;
+        let unraid_rows = db::get_unraid_sources(pool).await?;
 
         // The engine drives a single UniFi controller; use the first enabled one.
         let unifi = unifi_rows
@@ -125,6 +148,15 @@ impl RuntimeConfig {
                 token_secret: r.token_secret,
             })
             .collect();
+        let unraid = unraid_rows
+            .into_iter()
+            .filter(|r| r.enabled)
+            .map(|r| UnraidConfig {
+                name: r.name,
+                host: r.host,
+                api_key: r.api_key,
+            })
+            .collect();
 
         Ok(Self {
             poll_interval_sec: setting(&map, "poll_interval_sec", 15),
@@ -137,6 +169,7 @@ impl RuntimeConfig {
             ui_prefs: setting(&map, "ui_prefs", UiPrefs::default()),
             unifi,
             proxmox,
+            unraid,
         })
     }
 
@@ -148,6 +181,7 @@ impl RuntimeConfig {
         let mut h = DefaultHasher::new();
         self.unifi.hash(&mut h);
         self.proxmox.hash(&mut h);
+        self.unraid.hash(&mut h);
         self.http_timeout_sec.hash(&mut h);
         h.finish()
     }

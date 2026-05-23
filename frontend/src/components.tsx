@@ -28,6 +28,7 @@ export function Sidebar({
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
     { id: "unifi", label: "UniFi Network", icon: "network" },
     { id: "proxmox", label: "Proxmox", icon: "server" },
+    { id: "unraid", label: "Unraid", icon: "storage" },
   ];
   const utilities = [
     { id: "alerts", label: "Alerts", icon: "alert", badge: alertCount },

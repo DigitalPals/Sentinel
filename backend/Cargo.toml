@@ -23,8 +23,10 @@ sha2 = "0.10"
 # the session cookie's Max-Age.
 time = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 # `toml` is retained ONLY for the one-time `import-config` subcommand
 # (src/importer.rs), which reads the legacy config.toml into the database.
 # Runtime configuration is loaded from PostgreSQL, never from a file.

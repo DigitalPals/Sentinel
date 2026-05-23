@@ -168,6 +168,116 @@ export interface UnifiView {
   wiredClients: number;
 }
 
+export interface UnraidDisk {
+  id: string;
+  name: string;
+  kind: string;
+  device: string;
+  status: string;
+  temp: string;
+  size: string;
+  used: string;
+  usedPct: number;
+  spinning: boolean | null;
+}
+
+export interface UnraidStorage {
+  id: string;
+  name: string;
+  kind: string;
+  status: string;
+  used: string;
+  total: string;
+  usedPct: number;
+  members: number;
+  temp: string;
+}
+
+export interface UnraidContainer {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  status: string;
+  cpu: number;
+  mem: number;
+  memory: string;
+  netIo: string;
+  blockIo: string;
+  autoStart: boolean;
+  updateAvailable: boolean;
+  updateStatus: string;
+  rootFs: string;
+  writable: string;
+  logSize: string;
+  network: string;
+  ports: string;
+  orphaned: boolean;
+}
+
+export interface UnraidVm {
+  id: string;
+  name: string;
+  state: string;
+}
+
+export interface UnraidNotification {
+  title: string;
+  importance: string;
+  time: string;
+}
+
+export interface UnraidServer {
+  name: string;
+  source: string;
+  host: string;
+  status: string;
+  lanIp: string;
+  localUrl: string;
+  version: string;
+  apiVersion: string;
+  kernel: string;
+  uptime: string;
+  cpuBrand: string;
+  cpuCores: number;
+  cpuThreads: number;
+  cpu: number;
+  mem: number;
+  memory: string;
+  temp: string;
+  tempSensor: string;
+  arrayState: string;
+  arrayUsed: string;
+  arrayTotal: string;
+  arrayUsedPct: number;
+  diskCount: number;
+  parityStatus: string;
+  parityProgress: number;
+  parityErrors: number;
+  containersRunning: number;
+  containersTotal: number;
+  vmsRunning: number;
+  vmsTotal: number;
+  notificationCount: number;
+  softwareUpdateCount: number;
+  storage: UnraidStorage[];
+  disks: UnraidDisk[];
+  containers: UnraidContainer[];
+  vms: UnraidVm[];
+  notifications: UnraidNotification[];
+}
+
+export interface UnraidView {
+  kpis: Kpi[];
+  servers: UnraidServer[];
+  containersRunning: number;
+  containersTotal: number;
+  vmsRunning: number;
+  vmsTotal: number;
+  arrayWarn: number;
+  softwareUpdateCount: number;
+}
+
 export interface Alert {
   id: string;
   sev: string;
@@ -212,6 +322,7 @@ export interface Snapshot {
   dashboard: Dashboard;
   proxmox: ProxmoxView;
   unifi: UnifiView;
+  unraid: UnraidView;
   topology: TopoNode;
   alerts: AlertsView;
   events: EventsView;
@@ -264,9 +375,19 @@ export interface ProxmoxSource {
   enabled: boolean;
 }
 
+export interface UnraidSource {
+  id: number;
+  name: string;
+  host: string;
+  /** True if an API key is stored — the key itself is never sent to the UI. */
+  hasSecret: boolean;
+  enabled: boolean;
+}
+
 export interface SourcesData {
   unifi: UnifiSource[];
   proxmox: ProxmoxSource[];
+  unraid: UnraidSource[];
 }
 
 export interface TestResult {

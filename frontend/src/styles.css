@@ -591,6 +591,70 @@ button.chip:hover { background: var(--surf-2); color: var(--fg); }
   margin-top: 4px;
 }
 
+/* ── Unraid server tiles ───────────────────────────────────── */
+.unraid-dash-grid,
+.unraid-server-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+}
+.unraid-dash-tile,
+.unraid-server-tile {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.unraid-server-tile {
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+  font: inherit;
+}
+.unraid-dash-tile:last-child,
+.unraid-server-tile:last-child { border-right: 0; }
+.unraid-server-tile:hover { background: var(--surf-1); }
+.unraid-server-tile.selected {
+  background: linear-gradient(90deg, var(--accent-soft), transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.unraid-tile-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+.unraid-side-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 18px;
+}
+@media (max-width: 1280px) {
+  .unraid-dash-grid,
+  .unraid-server-grid { grid-template-columns: repeat(2, 1fr); }
+  .unraid-dash-tile:nth-child(2n),
+  .unraid-server-tile:nth-child(2n) { border-right: 0; }
+  .unraid-dash-tile:nth-child(n+3),
+  .unraid-server-tile:nth-child(n+3) { border-top: 1px solid var(--line); }
+}
+@media (max-width: 760px) {
+  .unraid-dash-grid,
+  .unraid-server-grid { grid-template-columns: 1fr; }
+  .unraid-dash-tile,
+  .unraid-server-tile { border-right: 0; border-top: 1px solid var(--line); }
+  .unraid-dash-tile:first-child,
+  .unraid-server-tile:first-child { border-top: 0; }
+}
+
 /* ── Node card (Proxmox overview) ───────────────────────────── */
 .node-card {
   padding: 14px 16px;
@@ -840,6 +904,202 @@ button.chip:hover { background: var(--surf-2); color: var(--fg); }
   letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--fg-3);
+}
+.align-r { text-align: right; }
+
+/* ── Unraid grouped resource rows ───────────────────────────── */
+.unraid-tabs { flex-wrap: wrap; }
+.unraid-resource-list {
+  overflow-x: auto;
+}
+.unraid-server-block {
+  min-width: 1060px;
+}
+.unraid-server-block + .unraid-server-block .unraid-section-head {
+  border-top: 1px solid var(--line);
+}
+.unraid-section-head,
+.unraid-resource-row {
+  display: grid;
+  grid-template-columns: 28px minmax(180px, 1.35fr) minmax(90px, .7fr) minmax(130px, 1.2fr) minmax(110px, 1fr) minmax(100px, .9fr) minmax(94px, .85fr) minmax(104px, .8fr);
+  gap: 14px;
+  align-items: center;
+}
+.unraid-section-head {
+  padding: 13px 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-1);
+}
+.unraid-section-head > *,
+.unraid-resource-row > * {
+  min-width: 0;
+}
+.unraid-server-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+  text-align: right;
+}
+.unraid-temp-source {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unraid-category {
+  background: var(--bg-1);
+}
+.unraid-category + .unraid-category {
+  border-top: 1px solid var(--line-2);
+}
+.unraid-category-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 28px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.unraid-category-head:hover { background: var(--surf-1); }
+.unraid-category-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.unraid-category-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--fg-1);
+}
+.unraid-category-sub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+.unraid-resource-row {
+  padding: 10px 28px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-1);
+  font-size: 12px;
+  cursor: default;
+  transition: background .1s;
+}
+.unraid-resource-row:hover { background: var(--surf-1); }
+.unraid-resource-head {
+  background: var(--bg);
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.unraid-resource-head:hover { background: var(--bg); }
+.unraid-row-empty {
+  padding: 20px 28px;
+  color: var(--fg-3);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--bg-1);
+  border-top: 1px solid var(--line);
+}
+.unraid-resource-row .cell-stack {
+  min-width: 0;
+}
+.unraid-resource-row .cell-stack .top,
+.unraid-resource-row .cell-stack .bot,
+.unraid-resource-meta,
+.unraid-text-metric span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unraid-resource-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-2);
+}
+.unraid-muted {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+.unraid-row-chips,
+.unraid-row-status {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.unraid-row-status {
+  justify-content: flex-end;
+}
+.unraid-resource-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+}
+.unraid-resource-icon.storage {
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-color: color-mix(in oklch, var(--ok) 30%, transparent);
+}
+.unraid-resource-icon.disk {
+  color: var(--info);
+  background: var(--info-soft);
+  border-color: color-mix(in oklch, var(--info) 30%, transparent);
+}
+.unraid-resource-icon.docker {
+  color: var(--accent-2);
+  background: color-mix(in oklch, var(--accent-2) 20%, transparent);
+  border-color: color-mix(in oklch, var(--accent-2) 30%, transparent);
+}
+.unraid-resource-icon.vm {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in oklch, var(--accent) 30%, transparent);
+}
+.unraid-resource-icon.warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: color-mix(in oklch, var(--warn) 30%, transparent);
+}
+.unraid-resource-icon.crit {
+  color: var(--crit);
+  background: var(--crit-soft);
+  border-color: color-mix(in oklch, var(--crit) 30%, transparent);
+}
+.unraid-text-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-1);
+}
+.unraid-text-metric span:last-child {
+  font-size: 10px;
+  color: var(--fg-3);
+  letter-spacing: .08em;
+  text-transform: uppercase;
 }
 
 /* ── Tree view (Network Topology) ───────────────────────────── */
@@ -1453,6 +1713,8 @@ html.is-scrolling * { scrollbar-color: var(--line-2) transparent; }
 .density-compact .alert-row { padding: 10px 14px; }
 .density-compact .guest-row { padding-top: 7px; padding-bottom: 7px; }
 .density-compact .node-section-head { padding-top: 9px; padding-bottom: 9px; }
+.density-compact .unraid-resource-row { padding-top: 7px; padding-bottom: 7px; }
+.density-compact .unraid-section-head { padding-top: 9px; padding-bottom: 9px; }
 .density-compact .filters { padding: 9px 14px; }
 .density-compact .node-tile { padding: 12px 14px; }
 .density-compact .log-row { padding-top: 4px; padding-bottom: 4px; }
@@ -1474,6 +1736,8 @@ html.is-scrolling * { scrollbar-color: var(--line-2) transparent; }
 .density-comfy .alert-row { padding: 18px 22px; }
 .density-comfy .guest-row { padding-top: 14px; padding-bottom: 14px; }
 .density-comfy .node-section-head { padding-top: 17px; padding-bottom: 17px; }
+.density-comfy .unraid-resource-row { padding-top: 14px; padding-bottom: 14px; }
+.density-comfy .unraid-section-head { padding-top: 17px; padding-bottom: 17px; }
 .density-comfy .filters { padding: 16px 22px; }
 .density-comfy .node-tile { padding: 22px 24px; }
 .density-comfy .log-row { padding-top: 8px; padding-bottom: 8px; }

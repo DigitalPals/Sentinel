@@ -24,6 +24,7 @@ pub(super) fn build_events_view(events: Vec<Event>, history: &History) -> Events
     let top_label = match top_source {
         "proxmox" => "Proxmox",
         "unifi" => "UniFi",
+        "unraid" => "Unraid",
         other => other,
     };
 

@@ -11,6 +11,7 @@ mod format;
 mod proxmox_view;
 mod topology;
 mod unifi_view;
+mod unraid_view;
 
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -27,16 +28,19 @@ use self::format::{fmt_ago, fmt_mbps, kpi, pct};
 use self::proxmox_view::process_proxmox;
 use self::topology::count_topology;
 use self::unifi_view::process_unifi;
+use self::unraid_view::process_unraid;
 use crate::config::RuntimeConfig;
 use crate::db;
 use crate::history::{History, Sample};
 use crate::model::*;
 use crate::proxmox::{ProxmoxClient, ProxmoxData};
 use crate::unifi::{UnifiClient, UnifiData};
+use crate::unraid::{UnraidClient, UnraidData};
 
 /// The HTTP clients built from the current source set.
 pub struct Clients {
     pub proxmox: Vec<ProxmoxClient>,
+    pub unraid: Vec<UnraidClient>,
     pub unifi: Option<UnifiClient>,
     /// `RuntimeConfig::source_sig` of the config these were built from.
     pub source_sig: u64,
@@ -52,6 +56,13 @@ pub fn build_clients(cfg: &RuntimeConfig) -> Clients {
             Err(e) => tracing::error!("skipping Proxmox source '{}': {e:#}", pc.name),
         }
     }
+    let mut unraid = Vec::new();
+    for uc in &cfg.unraid {
+        match UnraidClient::new(uc, cfg.http_timeout_sec) {
+            Ok(c) => unraid.push(c),
+            Err(e) => tracing::error!("skipping Unraid source '{}': {e:#}", uc.name),
+        }
+    }
     let unifi = match &cfg.unifi {
         Some(uc) => match UnifiClient::new(uc, cfg.http_timeout_sec) {
             Ok(c) => Some(c),
@@ -64,6 +75,7 @@ pub fn build_clients(cfg: &RuntimeConfig) -> Clients {
     };
     Clients {
         proxmox,
+        unraid,
         unifi,
         source_sig: cfg.source_sig(),
     }
@@ -112,8 +124,9 @@ pub async fn run_poller(state: Arc<AppState>) {
         if stale {
             let clients = build_clients(&cfg);
             tracing::info!(
-                "sources changed — {} Proxmox client(s), UniFi {}",
+                "sources changed — {} Proxmox client(s), {} Unraid client(s), UniFi {}",
                 clients.proxmox.len(),
+                clients.unraid.len(),
                 if clients.unifi.is_some() {
                     "configured"
                 } else {
@@ -134,13 +147,19 @@ pub async fn run_poller(state: Arc<AppState>) {
 
 async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
     // Take cheap clones of the clients so no lock is held across an await.
-    let (proxmox, unifi) = {
+    let (proxmox, unraid, unifi) = {
         let c = state.clients.read().unwrap();
-        (c.proxmox.clone(), c.unifi.clone())
+        (c.proxmox.clone(), c.unraid.clone(), c.unifi.clone())
     };
 
     // Query Proxmox hosts and UniFi concurrently.
     let pmx_futs = proxmox.iter().map(|c| async move {
+        (
+            c.name.clone(),
+            c.collect().await.map_err(|e| format!("{e:#}")),
+        )
+    });
+    let unraid_futs = unraid.iter().map(|c| async move {
         (
             c.name.clone(),
             c.collect().await.map_err(|e| format!("{e:#}")),
@@ -152,12 +171,16 @@ async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
             None => None,
         }
     };
-    let (pmx, unifi_res) = futures::join!(futures::future::join_all(pmx_futs), unifi_fut);
+    let (pmx, unraid_res, unifi_res) = futures::join!(
+        futures::future::join_all(pmx_futs),
+        futures::future::join_all(unraid_futs),
+        unifi_fut
+    );
 
     let (snapshot, sample) = {
         let mut history = state.history.write().unwrap();
         let mut store = state.alerts.write().unwrap();
-        build(cfg, &pmx, &unifi_res, &mut history, &mut store)
+        build(cfg, &pmx, &unraid_res, &unifi_res, &mut history, &mut store)
     };
 
     // Persist the new sample to the time-series table and the reconciled alert
@@ -184,6 +207,7 @@ async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
 fn build(
     config: &RuntimeConfig,
     pmx: &[(String, Result<ProxmoxData, String>)],
+    unraid: &[(String, Result<UnraidData, String>)],
     unifi: &Option<Result<UnifiData, String>>,
     history: &mut History,
     store: &mut AlertStore,
@@ -265,6 +289,63 @@ fn build(
         }
     }
 
+    // ── Unraid ──────────────────────────────────────────────────────────
+    let mut unraid_servers: Vec<UnraidServerOut> = Vec::new();
+    let mut unraid_containers_running = 0u32;
+    let mut unraid_containers_total = 0u32;
+    let mut unraid_vms_running = 0u32;
+    let mut unraid_vms_total = 0u32;
+    let mut unraid_array_used_pct_sum = 0.0;
+    let mut unraid_array_used_tb = 0.0;
+    let mut unraid_array_warn = 0u32;
+    let mut unraid_software_update_count = 0u32;
+    for (name, result) in unraid {
+        match result {
+            Err(e) => sources.push(SourceHealth {
+                name: name.clone(),
+                kind: "unraid".to_string(),
+                ok: false,
+                detail: "unreachable".to_string(),
+                error: Some(e.clone()),
+            }),
+            Ok(data) => {
+                let processed = process_unraid(data, now, &config.thresholds);
+                unraid_containers_running += processed.containers_running;
+                unraid_containers_total += processed.containers_total;
+                unraid_vms_running += processed.vms_running;
+                unraid_vms_total += processed.vms_total;
+                unraid_software_update_count += processed.software_update_count;
+                unraid_array_used_pct_sum += processed.array_used_pct as f64;
+                unraid_array_used_tb += processed.array_used_tb;
+                if processed.array_used_pct >= config.thresholds.unraid_array_warn {
+                    unraid_array_warn += 1;
+                }
+                events.extend(processed.events);
+                cands.extend(processed.candidates);
+                sources.push(SourceHealth {
+                    name: data.source_name.clone(),
+                    kind: "unraid".to_string(),
+                    ok: true,
+                    detail: format!(
+                        "Unraid {} · array {} · {} container(s)",
+                        data.version,
+                        data.array.state,
+                        data.containers.len()
+                    ),
+                    error: None,
+                });
+                unraid_servers.push(processed.server);
+            }
+        }
+    }
+    let unraid_servers_online = unraid_servers.iter().filter(|s| s.status == "ok").count() as u32;
+    let unraid_servers_total = unraid_servers.len() as u32;
+    let unraid_array_used_pct = if unraid_servers_total == 0 {
+        0.0
+    } else {
+        unraid_array_used_pct_sum / unraid_servers_total as f64
+    };
+
     // ── Cluster-wide scalars ─────────────────────────────────────────────
     let nodes_online = nodes.iter().filter(|n| n.status == "ok").count() as u32;
     let nodes_total = nodes.len() as u32;
@@ -274,8 +355,8 @@ fn build(
         .filter(|d| d.status != "crit")
         .count() as u32;
     let devices_total = unifi_view.devices.len() as u32;
-    let hosts_up = nodes_online + devices_online;
-    let hosts_total = nodes_total + devices_total;
+    let hosts_up = nodes_online + devices_online + unraid_servers_online;
+    let hosts_total = nodes_total + devices_total + unraid_servers_total;
     let availability = if hosts_total == 0 {
         100.0
     } else {
@@ -329,6 +410,11 @@ fn build(
         wireless_clients: unifi_view.wireless_clients as f64,
         wired_clients: unifi_view.wired_clients as f64,
         poe_ports: unifi_view.poe_active as f64,
+        unraid_servers_online: unraid_servers_online as f64,
+        unraid_array_used_pct,
+        unraid_array_used_tb,
+        unraid_containers_running: unraid_containers_running as f64,
+        unraid_vms_running: unraid_vms_running as f64,
         events_total: events.len() as f64,
         error_events: error_events as f64,
     };
@@ -530,6 +616,48 @@ fn build(
         ..unifi_view
     };
 
+    // ── Unraid page KPIs ─────────────────────────────────────────────────
+    let unraid_kpis = vec![
+        kpi(
+            format!("{unraid_servers_online} / {unraid_servers_total}"),
+            "",
+            "servers online".to_string(),
+            history.trend(24, |s| s.unraid_servers_online),
+            history.spark(24, |s| s.unraid_servers_online),
+        ),
+        kpi(
+            format!("{unraid_array_used_pct:.0}"),
+            "%",
+            format!("{unraid_array_warn} server(s) above threshold"),
+            history.trend(24, |s| s.unraid_array_used_pct),
+            history.spark(24, |s| s.unraid_array_used_pct),
+        ),
+        kpi(
+            unraid_containers_running.to_string(),
+            format!("/{}", unraid_containers_total),
+            "Docker containers running".to_string(),
+            history.trend(24, |s| s.unraid_containers_running),
+            history.spark(24, |s| s.unraid_containers_running),
+        ),
+        kpi(
+            unraid_vms_running.to_string(),
+            format!("/{}", unraid_vms_total),
+            "VMs running".to_string(),
+            history.trend(24, |s| s.unraid_vms_running),
+            history.spark(24, |s| s.unraid_vms_running),
+        ),
+    ];
+    let unraid = UnraidView {
+        kpis: unraid_kpis,
+        servers: unraid_servers,
+        containers_running: unraid_containers_running,
+        containers_total: unraid_containers_total,
+        vms_running: unraid_vms_running,
+        vms_total: unraid_vms_total,
+        array_warn: unraid_array_warn,
+        software_update_count: unraid_software_update_count,
+    };
+
     // ── Alerts + Events views ────────────────────────────────────────────
     let alerts_view = build_alerts_view(alerts, history);
     let events_view = build_events_view(events, history);
@@ -541,6 +669,7 @@ fn build(
         dashboard,
         proxmox,
         unifi: unifi_view,
+        unraid,
         topology,
         alerts: alerts_view,
         events: events_view,

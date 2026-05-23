@@ -18,11 +18,14 @@ use tower_http::{
 };
 
 use crate::auth;
-use crate::config::{AlertThresholds, ProxmoxConfig, RuntimeConfig, UiPrefs, UnifiConfig};
+use crate::config::{
+    AlertThresholds, ProxmoxConfig, RuntimeConfig, UiPrefs, UnifiConfig, UnraidConfig,
+};
 use crate::db;
 use crate::engine::{patch_alerts, AppState};
 use crate::proxmox::ProxmoxClient;
 use crate::unifi::UnifiClient;
+use crate::unraid::UnraidClient;
 
 pub fn router(state: Arc<AppState>) -> Router {
     // Public auth endpoints — reachable without a session, so the login page
@@ -46,6 +49,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/sources/unifi/:id",
             put(update_unifi).delete(delete_unifi),
+        )
+        .route("/api/sources/unraid", post(create_unraid))
+        .route(
+            "/api/sources/unraid/:id",
+            put(update_unraid).delete(delete_unraid),
         )
         .route("/api/sources/proxmox", post(create_proxmox))
         .route(
@@ -264,9 +272,21 @@ struct ProxmoxSourceOut {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct UnraidSourceOut {
+    id: i64,
+    name: String,
+    host: String,
+    /// Whether an API key is stored — the key itself is never sent to clients.
+    has_secret: bool,
+    enabled: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SourcesResponse {
     unifi: Vec<UnifiSourceOut>,
     proxmox: Vec<ProxmoxSourceOut>,
+    unraid: Vec<UnraidSourceOut>,
 }
 
 /// List all configured sources, with secrets masked.
@@ -294,7 +314,22 @@ async fn get_sources(State(state): State<Arc<AppState>>) -> ApiResult<SourcesRes
             enabled: r.enabled,
         })
         .collect();
-    Ok(Json(SourcesResponse { unifi, proxmox }))
+    let unraid = db::get_unraid_sources(&state.pool)
+        .await?
+        .into_iter()
+        .map(|r| UnraidSourceOut {
+            id: r.id,
+            name: r.name,
+            host: r.host,
+            has_secret: !r.api_key.is_empty(),
+            enabled: r.enabled,
+        })
+        .collect();
+    Ok(Json(SourcesResponse {
+        unifi,
+        proxmox,
+        unraid,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -361,6 +396,91 @@ async fn delete_unifi(
 ) -> ApiResult<serde_json::Value> {
     if !db::delete_unifi_source(&state.pool, id).await? {
         return Err(not_found("unknown UniFi source"));
+    }
+    refresh_config(&state).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnraidSourceIn {
+    name: String,
+    host: String,
+    /// Omitted or empty on update keeps the stored key.
+    api_key: Option<String>,
+    enabled: Option<bool>,
+}
+
+async fn create_unraid(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UnraidSourceIn>,
+) -> ApiResult<serde_json::Value> {
+    let name = req.name.trim();
+    let host = req.host.trim();
+    if name.is_empty() || host.is_empty() {
+        return Err(bad_request("name and host are required"));
+    }
+    let api_key = req.api_key.unwrap_or_default();
+    if api_key.trim().is_empty() {
+        return Err(bad_request("API key is required"));
+    }
+    let taken = db::get_unraid_sources(&state.pool)
+        .await?
+        .iter()
+        .any(|r| r.name == name);
+    if taken {
+        return Err(bad_request(format!(
+            "an Unraid source named '{name}' already exists"
+        )));
+    }
+    let id = db::insert_unraid_source(
+        &state.pool,
+        name,
+        host,
+        api_key.trim(),
+        req.enabled.unwrap_or(true),
+    )
+    .await?;
+    refresh_config(&state).await?;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn update_unraid(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(req): Json<UnraidSourceIn>,
+) -> ApiResult<serde_json::Value> {
+    let existing = db::get_unraid_source(&state.pool, id)
+        .await?
+        .ok_or_else(|| not_found("unknown Unraid source"))?;
+    let name = req.name.trim();
+    let host = req.host.trim();
+    if name.is_empty() || host.is_empty() {
+        return Err(bad_request("name and host are required"));
+    }
+    let api_key = match req.api_key {
+        Some(k) if !k.trim().is_empty() => k.trim().to_string(),
+        _ => existing.api_key,
+    };
+    db::update_unraid_source(
+        &state.pool,
+        id,
+        name,
+        host,
+        &api_key,
+        req.enabled.unwrap_or(existing.enabled),
+    )
+    .await?;
+    refresh_config(&state).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn delete_unraid(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> ApiResult<serde_json::Value> {
+    if !db::delete_unraid_source(&state.pool, id).await? {
+        return Err(not_found("unknown Unraid source"));
     }
     refresh_config(&state).await?;
     Ok(Json(json!({ "ok": true })))
@@ -545,6 +665,43 @@ async fn test_source(
                 Ok(d) => TestResult {
                     ok: true,
                     detail: format!("Proxmox VE {} reachable", d.release),
+                },
+                Err(e) => TestResult {
+                    ok: false,
+                    detail: format!("{e:#}"),
+                },
+            }))
+        }
+        "unraid" => {
+            let api_key = match req.api_key {
+                Some(k) if !k.trim().is_empty() => k.trim().to_string(),
+                _ => match req.id {
+                    Some(id) => {
+                        db::get_unraid_source(&state.pool, id)
+                            .await?
+                            .ok_or_else(|| not_found("unknown Unraid source"))?
+                            .api_key
+                    }
+                    None => return Err(bad_request("API key is required")),
+                },
+            };
+            let client = UnraidClient::new(
+                &UnraidConfig {
+                    name: "test".to_string(),
+                    host,
+                    api_key,
+                },
+                timeout,
+            )?;
+            Ok(Json(match client.collect().await {
+                Ok(d) => TestResult {
+                    ok: true,
+                    detail: format!(
+                        "Unraid {} · array {} · {} container(s)",
+                        d.version,
+                        d.array.state,
+                        d.containers.len()
+                    ),
                 },
                 Err(e) => TestResult {
                     ok: false,

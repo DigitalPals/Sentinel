@@ -6,6 +6,7 @@ import { SettingsPanel, useSettings } from "./settings";
 import Dashboard from "./pages/Dashboard";
 import Unifi from "./pages/Unifi";
 import Proxmox from "./pages/Proxmox";
+import Unraid from "./pages/Unraid";
 import Alerts from "./pages/Alerts";
 import Events from "./pages/Events";
 import Settings from "./pages/Settings";
@@ -23,6 +24,7 @@ const PAGES: Record<string, { crumb: string; title: string }> = {
   dashboard: { crumb: "Overview / Cluster", title: "Operations Dashboard" },
   unifi: { crumb: "Network / UniFi", title: "UniFi Network Devices" },
   proxmox: { crumb: "Compute / Proxmox VE", title: "Proxmox Servers & Guests" },
+  unraid: { crumb: "Storage / Unraid", title: "Unraid Servers" },
   alerts: { crumb: "Operations / Alerts", title: "Alerts" },
   logs: { crumb: "Operations / Events & Logs", title: "Events & Logs" },
   settings: { crumb: "System / Configuration", title: "Settings" },
@@ -276,6 +278,9 @@ function AppBody({
       break;
     case "proxmox":
       pageEl = <Proxmox snap={snap} />;
+      break;
+    case "unraid":
+      pageEl = <Unraid snap={snap} />;
       break;
     case "alerts":
       pageEl = <Alerts snap={snap} refresh={refresh} />;

@@ -58,6 +58,11 @@ pub async fn setup_timescale(pool: &PgPool) {
                 avg(active_alerts)    AS active_alerts, \
                 avg(storage_tb)       AS storage_tb, \
                 avg(wireless_clients) AS wireless_clients, \
+                avg(unraid_servers_online)     AS unraid_servers_online, \
+                avg(unraid_array_used_pct)     AS unraid_array_used_pct, \
+                avg(unraid_array_used_tb)      AS unraid_array_used_tb, \
+                avg(unraid_containers_running) AS unraid_containers_running, \
+                avg(unraid_vms_running)        AS unraid_vms_running, \
                 max(events_total)     AS events_total, \
                 max(error_events)     AS error_events \
          FROM metric_samples GROUP BY bucket WITH NO DATA";
@@ -154,6 +159,16 @@ pub struct ProxmoxSourceRow {
     pub host: String,
     pub token_id: String,
     pub token_secret: String,
+    pub enabled: bool,
+}
+
+/// A configured Unraid source as stored in the database.
+#[derive(Debug, Clone, FromRow)]
+pub struct UnraidSourceRow {
+    pub id: i64,
+    pub name: String,
+    pub host: String,
+    pub api_key: String,
     pub enabled: bool,
 }
 
@@ -308,6 +323,78 @@ pub async fn delete_proxmox_source(pool: &PgPool, id: i64) -> anyhow::Result<boo
     Ok(res.rows_affected() > 0)
 }
 
+pub async fn get_unraid_sources(pool: &PgPool) -> anyhow::Result<Vec<UnraidSourceRow>> {
+    sqlx::query_as::<_, UnraidSourceRow>(
+        "SELECT id, name, host, api_key, enabled FROM unraid_sources ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .context("loading Unraid sources")
+}
+
+pub async fn get_unraid_source(pool: &PgPool, id: i64) -> anyhow::Result<Option<UnraidSourceRow>> {
+    sqlx::query_as::<_, UnraidSourceRow>(
+        "SELECT id, name, host, api_key, enabled FROM unraid_sources WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .context("loading Unraid source")
+}
+
+pub async fn insert_unraid_source(
+    pool: &PgPool,
+    name: &str,
+    host: &str,
+    api_key: &str,
+    enabled: bool,
+) -> anyhow::Result<i64> {
+    let row = sqlx::query(
+        "INSERT INTO unraid_sources (name, host, api_key, enabled) \
+         VALUES ($1, $2, $3, $4) RETURNING id",
+    )
+    .bind(name)
+    .bind(host)
+    .bind(api_key)
+    .bind(enabled)
+    .fetch_one(pool)
+    .await
+    .context("inserting Unraid source")?;
+    Ok(row.get("id"))
+}
+
+pub async fn update_unraid_source(
+    pool: &PgPool,
+    id: i64,
+    name: &str,
+    host: &str,
+    api_key: &str,
+    enabled: bool,
+) -> anyhow::Result<bool> {
+    let res = sqlx::query(
+        "UPDATE unraid_sources SET name = $2, host = $3, api_key = $4, enabled = $5, \
+         updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(host)
+    .bind(api_key)
+    .bind(enabled)
+    .execute(pool)
+    .await
+    .context("updating Unraid source")?;
+    Ok(res.rows_affected() > 0)
+}
+
+pub async fn delete_unraid_source(pool: &PgPool, id: i64) -> anyhow::Result<bool> {
+    let res = sqlx::query("DELETE FROM unraid_sources WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .context("deleting Unraid source")?;
+    Ok(res.rows_affected() > 0)
+}
+
 // ── Users & sessions ────────────────────────────────────────────────────────
 
 /// A user account as stored in the database.
@@ -431,6 +518,11 @@ struct SampleRow {
     wireless_clients: f64,
     wired_clients: f64,
     poe_ports: f64,
+    unraid_servers_online: f64,
+    unraid_array_used_pct: f64,
+    unraid_array_used_tb: f64,
+    unraid_containers_running: f64,
+    unraid_vms_running: f64,
     events_total: f64,
     error_events: f64,
 }
@@ -454,6 +546,11 @@ impl From<SampleRow> for Sample {
             wireless_clients: r.wireless_clients,
             wired_clients: r.wired_clients,
             poe_ports: r.poe_ports,
+            unraid_servers_online: r.unraid_servers_online,
+            unraid_array_used_pct: r.unraid_array_used_pct,
+            unraid_array_used_tb: r.unraid_array_used_tb,
+            unraid_containers_running: r.unraid_containers_running,
+            unraid_vms_running: r.unraid_vms_running,
             events_total: r.events_total,
             error_events: r.error_events,
         }
@@ -468,8 +565,9 @@ pub async fn insert_sample(pool: &PgPool, s: &Sample) -> anyhow::Result<()> {
         "INSERT INTO metric_samples (ts, wan_down_mbps, wan_up_mbps, availability, \
          devices_online, devices_total, active_alerts, alerts_crit, alerts_warn, vm_count, \
          lxc_count, nodes_online, storage_tb, wireless_clients, wired_clients, poe_ports, \
-         events_total, error_events) VALUES \
-         ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) \
+         unraid_servers_online, unraid_array_used_pct, unraid_array_used_tb, \
+         unraid_containers_running, unraid_vms_running, events_total, error_events) VALUES \
+         ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23) \
          ON CONFLICT (ts) DO NOTHING",
     )
     .bind(ts)
@@ -488,6 +586,11 @@ pub async fn insert_sample(pool: &PgPool, s: &Sample) -> anyhow::Result<()> {
     .bind(s.wireless_clients)
     .bind(s.wired_clients)
     .bind(s.poe_ports)
+    .bind(s.unraid_servers_online)
+    .bind(s.unraid_array_used_pct)
+    .bind(s.unraid_array_used_tb)
+    .bind(s.unraid_containers_running)
+    .bind(s.unraid_vms_running)
     .bind(s.events_total)
     .bind(s.error_events)
     .execute(pool)
@@ -502,7 +605,9 @@ pub async fn recent_samples(pool: &PgPool, limit: usize) -> anyhow::Result<Vec<S
     let rows = sqlx::query_as::<_, SampleRow>(
         "SELECT ts, wan_down_mbps, wan_up_mbps, availability, devices_online, devices_total, \
          active_alerts, alerts_crit, alerts_warn, vm_count, lxc_count, nodes_online, storage_tb, \
-         wireless_clients, wired_clients, poe_ports, events_total, error_events \
+         wireless_clients, wired_clients, poe_ports, unraid_servers_online, \
+         unraid_array_used_pct, unraid_array_used_tb, unraid_containers_running, \
+         unraid_vms_running, events_total, error_events \
          FROM metric_samples ORDER BY ts DESC LIMIT $1",
     )
     .bind(limit as i64)

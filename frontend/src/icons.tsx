@@ -26,6 +26,13 @@ const ICONS: Record<string, React.ReactElement> = {
       <circle cx="5" cy="11.25" r=".5" fill="currentColor" />
     </svg>
   ),
+  storage: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <ellipse cx="8" cy="4" rx="5" ry="2" />
+      <path d="M3 4v6.5c0 1.1 2.2 2 5 2s5-.9 5-2V4" />
+      <path d="M3 7.3c0 1.1 2.2 2 5 2s5-.9 5-2" />
+    </svg>
+  ),
   alert: (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
       <path d="M8 2 L14 13 H2 Z" strokeLinejoin="round" />

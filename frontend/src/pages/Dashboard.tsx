@@ -14,6 +14,7 @@ function fmtData(gb: number): { value: string; unit: string } {
 
 export default function Dashboard({ snap }: { snap: Snapshot }) {
   const d = snap.dashboard;
+  const unraid = snap.unraid;
   const [topoOpen, setTopoOpen] = React.useState(false);
 
   const bw = d.bandwidth;
@@ -152,6 +153,71 @@ export default function Dashboard({ snap }: { snap: Snapshot }) {
                   <Bar label="MEM" value={n.mem} />
                   <Bar label="DISK" value={n.disk} />
                   <Bar label="NET" value={n.net} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card
+        title="Unraid Storage"
+        sub={`live · ${unraid.servers.length} server(s) · array / docker / vm`}
+        actions={
+          <>
+            <Chip tone={unraid.arrayWarn ? "warn" : "ok"} dot>
+              {unraid.arrayWarn} capacity warnings
+            </Chip>
+            <Chip>
+              {unraid.containersRunning}/{unraid.containersTotal} containers
+            </Chip>
+            {unraid.softwareUpdateCount > 0 && <Chip tone="warn">{unraid.softwareUpdateCount} updates</Chip>}
+          </>
+        }
+        tight
+        style={{ marginBottom: 14 }}
+      >
+        {unraid.servers.length === 0 ? (
+          <div className="empty-row">No Unraid servers reachable.</div>
+        ) : (
+          <div
+            className="unraid-dash-grid"
+            style={
+              unraid.servers.length > 0 && unraid.servers.length <= 3
+                ? { gridTemplateColumns: `repeat(${unraid.servers.length}, 1fr)` }
+                : undefined
+            }
+          >
+            {unraid.servers.map((s) => (
+              <div className="unraid-dash-tile" key={s.source}>
+                <div className="node-tile-hd">
+                  <StatusDot tone={s.status} />
+                  <div className="node-name">{s.name}</div>
+                  <Chip dot tone={s.arrayState === "STARTED" ? "ok" : "crit"}>
+                    {s.arrayState}
+                  </Chip>
+                </div>
+                <div className="node-tile-meta">
+                  <span>{s.version || "Unraid"}</span>
+                  <span>up {s.uptime}</span>
+                </div>
+                <div className="node-tile-meta">
+                  <span>
+                    Array {s.arrayUsed} / {s.arrayTotal}
+                  </span>
+                  <span>{s.temp}</span>
+                </div>
+                <div className="node-tile-bars">
+                  <Bar label="ARRAY" value={s.arrayUsedPct} />
+                  <Bar label="CPU" value={s.cpu} />
+                  <Bar label="MEM" value={s.mem} />
+                </div>
+                <div className="unraid-tile-foot">
+                  <span>{s.diskCount} disks</span>
+                  <span>{s.containersRunning}/{s.containersTotal} containers</span>
+                  <span>{s.vmsRunning}/{s.vmsTotal} VMs</span>
+                  <span>{s.notificationCount} notices</span>
+                  {s.softwareUpdateCount > 0 && <span>{s.softwareUpdateCount} updates</span>}
                 </div>
               </div>
             ))}

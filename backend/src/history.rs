@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// One time-stamped row of monitored scalars.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct Sample {
     /// Unix epoch seconds.
     pub t: i64,
@@ -30,6 +31,11 @@ pub struct Sample {
     pub wireless_clients: f64,
     pub wired_clients: f64,
     pub poe_ports: f64,
+    pub unraid_servers_online: f64,
+    pub unraid_array_used_pct: f64,
+    pub unraid_array_used_tb: f64,
+    pub unraid_containers_running: f64,
+    pub unraid_vms_running: f64,
     pub events_total: f64,
     pub error_events: f64,
 }

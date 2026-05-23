@@ -31,6 +31,17 @@ const THRESHOLD_GROUPS: { title: string; keys: [string, string][] }[] = [
       ["unifi_mem_warn", "Memory warning %"],
     ],
   },
+  {
+    title: "Unraid servers",
+    keys: [
+      ["unraid_cpu_warn", "CPU warning %"],
+      ["unraid_mem_warn", "Memory warning %"],
+      ["unraid_array_warn", "Array usage warning %"],
+      ["unraid_disk_warn", "Disk usage warning %"],
+      ["unraid_temp_warn", "Temperature warning C"],
+      ["unraid_temp_crit", "Temperature critical C"],
+    ],
+  },
 ];
 
 export default function AlertsSection() {

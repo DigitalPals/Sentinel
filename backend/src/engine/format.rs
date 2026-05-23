@@ -28,15 +28,45 @@ pub(super) fn fmt_uptime(secs: u64) -> String {
 
 pub(super) fn fmt_mem(bytes: u64) -> String {
     let gb = bytes as f64 / 1_073_741_824.0;
-    if gb >= 1.0 {
-        if (gb.fract()).abs() < 0.05 {
-            format!("{} GB", gb.round() as u64)
-        } else {
-            format!("{gb:.1} GB")
-        }
+    if gb >= 1024.0 {
+        fmt_unit(gb / 1024.0, "TB")
+    } else if gb >= 1.0 {
+        fmt_unit(gb, "GB")
     } else {
         format!("{} MB", bytes / 1_048_576)
     }
+}
+
+fn fmt_unit(value: f64, unit: &str) -> String {
+    if (value.fract()).abs() < 0.05 {
+        format!("{} {unit}", comma_u64(value.round() as u64))
+    } else {
+        format!("{} {unit}", comma_decimal(value, 1))
+    }
+}
+
+fn comma_decimal(value: f64, decimals: usize) -> String {
+    let raw = format!("{value:.decimals$}");
+    let Some((int, frac)) = raw.split_once('.') else {
+        return comma_u64(value.round() as u64);
+    };
+    format!("{}.{}", comma_digits(int), frac)
+}
+
+fn comma_u64(value: u64) -> String {
+    comma_digits(&value.to_string())
+}
+
+fn comma_digits(digits: &str) -> String {
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    let first_group = digits.len() % 3;
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (i == first_group || (i > first_group && (i - first_group) % 3 == 0)) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 pub(super) fn fmt_mbps(mbps: f64) -> String {
@@ -112,5 +142,18 @@ mod tests {
     fn bandwidth_formatter_switches_to_gbps() {
         assert_eq!(fmt_mbps(999.0), "999 Mbps");
         assert_eq!(fmt_mbps(1250.0), "1.25 Gbps");
+    }
+
+    #[test]
+    fn memory_formatter_switches_large_values_to_tb() {
+        assert_eq!(fmt_mem(512 * 1_073_741_824), "512 GB");
+        assert_eq!(fmt_mem(2 * 1_099_511_627_776), "2 TB");
+        assert_eq!(fmt_mem(90_018_414_247_936), "81.9 TB");
+    }
+
+    #[test]
+    fn memory_formatter_groups_large_numbers() {
+        assert_eq!(fmt_unit(12_345.0, "GB"), "12,345 GB");
+        assert_eq!(fmt_unit(12_345.7, "GB"), "12,345.7 GB");
     }
 }

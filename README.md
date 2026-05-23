@@ -1,7 +1,7 @@
 # Cybex Sentinel
 
-> A dark, broody, real-time dashboard that watches your **UniFi network** and
-> **Proxmox VE** cluster so you don't have to keep five browser tabs open like
+> A dark, broody, real-time dashboard that watches your **UniFi network**,
+> **Proxmox VE** cluster and **Unraid** servers so you don't have to keep five browser tabs open like
 > some kind of animal.
 
 ![Cybex Sentinel — Operations Dashboard](screenshot.png)
@@ -55,6 +55,7 @@ said that number out loud over HTTP.
 ┌─────────────┐   poll 15s    ┌──────────────────┐   HTTP/JSON   ┌──────────────┐
 │ Proxmox VE  │ ◀──────────── │  Rust backend    │ ◀──────────── │  React SPA   │
 │ UniFi Net.  │ ◀──────────── │  (axum poller)   │ ──────────────▶  (Bun build) │
+│ Unraid API  │ ◀──────────── │                  │               │              │
 └─────────────┘               └──────────────────┘   /api/...    └──────────────┘
 ```
 
@@ -65,6 +66,7 @@ said that number out loud over HTTP.
 | **Dashboard** | The "everything is fine (citation needed)" page — availability, alerts, live WAN throughput, 24h bandwidth, per-node Proxmox tiles, top resource consumers and a topology snapshot. |
 | **UniFi Network** | Every adopted device with live clients, throughput, uptime, and a per-device detail panel — port grids for switches, radios for APs. |
 | **Proxmox** | Every node with live CPU/MEM/DISK/NET, and every VM / LXC guest grouped under its node with utilization bars. |
+| **Unraid** | Array and pool health, disks, Docker containers, VMs, parity status and warning/alert notifications from the Unraid GraphQL API. |
 | **Alerts** | Whatever crossed a threshold, with acknowledge / resolve so future-you stops seeing the same red dot. |
 | **Events & Logs** | A unified, time-ordered "what happened" stream. |
 
@@ -77,8 +79,8 @@ Compose. That's it.
 docker compose up -d --build
 ```
 
-Then open <http://localhost:8787>, finish the first-user setup, and add your
-UniFi controller and Proxmox host(s) on the **Settings** page. The backend will
+Then open <http://localhost:8787>, finish the first-user setup, and manage your
+Unraid, UniFi and Proxmox source(s) on the **Settings** page. The backend will
 start polling immediately and the dashboard will start filling in.
 
 The `app` image is a multi-stage build that compiles the Rust backend, builds
@@ -123,7 +125,7 @@ find the database before it can read its own settings (chicken / egg). That
 comes from the `DATABASE_URL` environment variable. The compose file sets it
 to `postgres://sentinel:sentinel@db:5432/sentinel`.
 
-Self-signed certs on your UniFi/Proxmox hosts are accepted automatically,
+Self-signed certs on your Unraid/UniFi/Proxmox hosts are accepted automatically,
 because that is the reality of homelab gear.
 
 ## Data sources
@@ -135,6 +137,10 @@ because that is the reality of homelab gear.
   (`/proxy/network/integration/v1`, requires UniFi Network 9.0+), with an API
   key created under Settings → Control Plane → Integrations. Topology is
   reconstructed from each device's uplink.
+- **Unraid** — the local GraphQL API at `/graphql`, authenticated with the
+  `x-api-key` header. Sentinel polls server identity, OS/API versions, array
+  capacity, parity status, disks, Docker containers, VMs, notifications and
+  CPU/memory/temperature metrics.
 
 ## Auth & security notes
 
@@ -146,7 +152,7 @@ because that is the reality of homelab gear.
 - The session cookie is `HttpOnly` and `SameSite=Lax`. It is **not** `Secure`
   by default (so plain-HTTP LAN deployments still work). If you put Sentinel
   behind TLS, set `SENTINEL_SECURE_COOKIES=1` on the backend.
-- UniFi/Proxmox credentials are stored as plaintext columns in PostgreSQL —
+- Unraid/UniFi/Proxmox credentials are stored as plaintext columns in PostgreSQL —
   same exposure as the old `config.toml` they replaced. Treat the database
   accordingly.
 
@@ -157,6 +163,7 @@ backend/    Rust monitoring backend (axum)
   migrations/  PostgreSQL + TimescaleDB schema
   src/
     proxmox.rs   Proxmox VE API client
+    unraid.rs    Unraid GraphQL API client
     unifi.rs     UniFi Integration API client
     db.rs        PostgreSQL / TimescaleDB data access
     config.rs    RuntimeConfig, loaded from the database
@@ -168,7 +175,7 @@ backend/    Rust monitoring backend (axum)
     routes.rs    HTTP surface
 frontend/   React + TypeScript SPA (Vite + Bun)
   src/
-    pages/       Dashboard, UniFi, Proxmox, Alerts, Events, Settings
+    pages/       Dashboard, UniFi, Proxmox, Unraid, Alerts, Events, Settings
     components.tsx, topology.tsx, api.ts
 Dockerfile           Multi-stage build: frontend (Bun) + backend (Rust) → slim runtime
 docker-compose.yml   TimescaleDB + app

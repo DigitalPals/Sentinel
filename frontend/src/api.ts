@@ -36,6 +36,14 @@ export type {
   TopoNode,
   UiPrefs,
   UniDevice,
+  UnraidContainer,
+  UnraidDisk,
+  UnraidNotification,
+  UnraidServer,
+  UnraidSource,
+  UnraidStorage,
+  UnraidView,
+  UnraidVm,
   UnifiSource,
   UnifiView,
 } from "./api-types";
@@ -171,6 +179,24 @@ export async function saveProxmoxSource(
 
 export async function deleteProxmoxSource(id: number): Promise<void> {
   await jsonOrThrow(await apiFetch(`/api/sources/proxmox/${id}`, { method: "DELETE" }));
+}
+
+export async function saveUnraidSource(
+  id: number | null,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const url = id == null ? "/api/sources/unraid" : `/api/sources/unraid/${id}`;
+  await jsonOrThrow(
+    await apiFetch(url, {
+      method: id == null ? "POST" : "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function deleteUnraidSource(id: number): Promise<void> {
+  await jsonOrThrow(await apiFetch(`/api/sources/unraid/${id}`, { method: "DELETE" }));
 }
 
 export async function testSource(body: Record<string, unknown>): Promise<TestResult> {

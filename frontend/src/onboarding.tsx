@@ -3,7 +3,7 @@
 // Onboarding is derived from real state, not a stored flag: it reappears after
 // a restart whenever something still needs setting up.
 //
-//  • The integration section (Proxmox + UniFi) shows only while *no* source is
+//  • The integration section shows only while *no* source is
 //    configured. As soon as any one source exists, it disappears — restarting
 //    the app will not bring it back.
 //  • The Welcome and Preferences steps show only in the browser session where
@@ -17,18 +17,19 @@ import {
   putSettings,
   saveProxmoxSource,
   saveUnifiSource,
+  saveUnraidSource,
   testSource,
 } from "./api";
 import { ACCENTS, type Accent, type Density, type Settings } from "./settings";
 import logoUrl from "./assets/logo.svg";
 
 type SetSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => void;
-type StepId = "welcome" | "proxmox" | "unifi" | "preferences" | "done";
+type StepId = "welcome" | "proxmox" | "unifi" | "unraid" | "preferences" | "done";
 
 export interface OnboardingState {
   /** Whether the wizard overlay should be shown. */
   show: boolean;
-  /** True while neither Proxmox nor UniFi has an enabled source. */
+  /** True while no monitoring source has been enabled. */
   needsIntegrations: boolean;
   /** Re-check source state — call after a source is added. */
   refresh: () => void;
@@ -48,7 +49,9 @@ export function useOnboarding(justSetUp: boolean): OnboardingState {
     getSources()
       .then((s) => {
         const configured =
-          s.proxmox.some((p) => p.enabled) || s.unifi.some((u) => u.enabled);
+          s.proxmox.some((p) => p.enabled) ||
+          s.unifi.some((u) => u.enabled) ||
+          s.unraid.some((u) => u.enabled);
         setNeedsIntegrations(!configured);
         setLoaded(true);
       })
@@ -94,7 +97,7 @@ export function Onboarding({
   const steps = React.useMemo<StepId[]>(() => {
     const s: StepId[] = [];
     if (justSetUp) s.push("welcome");
-    if (needsIntegrations) s.push("proxmox", "unifi");
+    if (needsIntegrations) s.push("proxmox", "unifi", "unraid");
     if (justSetUp) s.push("preferences");
     s.push("done");
     return s;
@@ -103,10 +106,11 @@ export function Onboarding({
   const [idx, setIdx] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState<{ tone: "ok" | "err"; text: string } | null>(null);
-  const [added, setAdded] = React.useState({ proxmox: 0, unifi: 0 });
+  const [added, setAdded] = React.useState({ proxmox: 0, unifi: 0, unraid: 0 });
 
   const [px, setPx] = React.useState({ name: "PVE1", host: "", tokenId: "", tokenSecret: "" });
   const [uni, setUni] = React.useState({ name: "UniFi", host: "", apiKey: "" });
+  const [unraid, setUnraid] = React.useState({ name: "Unraid", host: "", apiKey: "" });
   const [pollSec, setPollSec] = React.useState(15);
 
   const current = steps[Math.min(idx, steps.length - 1)];
@@ -117,14 +121,16 @@ export function Onboarding({
   };
   const next = () => go(idx + 1);
 
-  const runTest = async (kind: "proxmox" | "unifi") => {
+  const runTest = async (kind: "proxmox" | "unifi" | "unraid") => {
     setBusy(true);
     setMsg(null);
     try {
       const r = await testSource(
         kind === "proxmox"
           ? { kind, host: px.host, tokenId: px.tokenId, tokenSecret: px.tokenSecret }
-          : { kind, host: uni.host, apiKey: uni.apiKey },
+          : kind === "unifi"
+            ? { kind, host: uni.host, apiKey: uni.apiKey }
+            : { kind, host: unraid.host, apiKey: unraid.apiKey },
       );
       setMsg({ tone: r.ok ? "ok" : "err", text: r.detail });
     } catch (e: any) {
@@ -167,6 +173,24 @@ export function Onboarding({
     }
   };
 
+  const addUnraid = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await saveUnraidSource(null, {
+        name: unraid.name,
+        host: unraid.host,
+        apiKey: unraid.apiKey,
+      });
+      setAdded((a) => ({ ...a, unraid: a.unraid + 1 }));
+      next();
+    } catch (e: any) {
+      setMsg({ tone: "err", text: String(e?.message ?? e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const savePrefs = async () => {
     if (pollSec !== 15) {
       try {
@@ -186,7 +210,7 @@ export function Onboarding({
         <div className="onb-hero" />
         <h2 className="onb-title">Welcome to Cybex Sentinel</h2>
         <p className="onb-text">
-          Sentinel keeps a live eye on your UniFi network and Proxmox VE infrastructure.
+          Sentinel keeps a live eye on your UniFi network, Proxmox VE infrastructure and Unraid storage.
           Let's connect your first sources — it only takes a minute, and every step is
           optional.
         </p>
@@ -283,6 +307,45 @@ export function Onboarding({
         </button>
       </div>
     );
+  } else if (current === "unraid") {
+    body = (
+      <div className="onb-step">
+        <div className="onb-step-tag">Step {stepNo} · Unraid</div>
+        <h2 className="onb-title">Add an Unraid server</h2>
+        <p className="onb-text">
+          Connect an Unraid server with the GraphQL API endpoint and API key. Use the
+          same base URL you use for the Unraid web UI.
+        </p>
+        <div className="set-row set-grid-2">
+          <Field label="Name">
+            <input
+              className="set-input"
+              value={unraid.name}
+              onChange={(e) => setUnraid({ ...unraid, name: e.target.value })}
+            />
+          </Field>
+          <Field label="Host">
+            <input
+              className="set-input"
+              value={unraid.host}
+              placeholder="https://10.0.0.2"
+              onChange={(e) => setUnraid({ ...unraid, host: e.target.value })}
+            />
+          </Field>
+          <Field label="API key">
+            <input
+              className="set-input"
+              type="password"
+              value={unraid.apiKey}
+              onChange={(e) => setUnraid({ ...unraid, apiKey: e.target.value })}
+            />
+          </Field>
+        </div>
+        <button className="set-btn" disabled={busy} onClick={() => runTest("unraid")}>
+          Test connection
+        </button>
+      </div>
+    );
   } else if (current === "preferences") {
     body = (
       <div className="onb-step">
@@ -338,6 +401,7 @@ export function Onboarding({
     const parts: string[] = [];
     if (added.proxmox) parts.push(`${added.proxmox} Proxmox host${added.proxmox > 1 ? "s" : ""}`);
     if (added.unifi) parts.push(`${added.unifi} UniFi controller${added.unifi > 1 ? "s" : ""}`);
+    if (added.unraid) parts.push(`${added.unraid} Unraid server${added.unraid > 1 ? "s" : ""}`);
     body = (
       <div className="onb-step onb-center">
         <div className="onb-check">✓</div>
@@ -395,6 +459,19 @@ export function Onboarding({
         </button>
         <button className="set-btn primary" disabled={busy} onClick={addUnifi}>
           Add controller
+        </button>
+      </>
+    );
+  } else if (current === "unraid") {
+    foot = (
+      <>
+        {backBtn}
+        <span className="spacer" />
+        <button className="set-btn" disabled={busy} onClick={next}>
+          Skip
+        </button>
+        <button className="set-btn primary" disabled={busy} onClick={addUnraid}>
+          Add server
         </button>
       </>
     );

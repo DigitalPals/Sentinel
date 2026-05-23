@@ -214,6 +214,130 @@ pub struct UnifiView {
 
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct UnraidStorageOut {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub status: String,
+    pub used: String,
+    pub total: String,
+    pub used_pct: u32,
+    pub members: u32,
+    pub temp: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UnraidDiskOut {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub device: String,
+    pub status: String,
+    pub temp: String,
+    pub size: String,
+    pub used: String,
+    pub used_pct: u32,
+    pub spinning: Option<bool>,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UnraidContainerOut {
+    pub id: String,
+    pub name: String,
+    pub image: String,
+    pub state: String,
+    pub status: String,
+    pub cpu: u32,
+    pub mem: u32,
+    pub memory: String,
+    pub net_io: String,
+    pub block_io: String,
+    pub auto_start: bool,
+    pub update_available: bool,
+    pub update_status: String,
+    pub root_fs: String,
+    pub writable: String,
+    pub log_size: String,
+    pub network: String,
+    pub ports: String,
+    pub orphaned: bool,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UnraidVmOut {
+    pub id: String,
+    pub name: String,
+    pub state: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UnraidNotificationOut {
+    pub title: String,
+    pub importance: String,
+    pub time: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UnraidServerOut {
+    pub name: String,
+    pub source: String,
+    pub host: String,
+    pub status: String,
+    pub lan_ip: String,
+    pub local_url: String,
+    pub version: String,
+    pub api_version: String,
+    pub kernel: String,
+    pub uptime: String,
+    pub cpu_brand: String,
+    pub cpu_cores: u32,
+    pub cpu_threads: u32,
+    pub cpu: u32,
+    pub mem: u32,
+    pub memory: String,
+    pub temp: String,
+    pub temp_sensor: String,
+    pub array_state: String,
+    pub array_used: String,
+    pub array_total: String,
+    pub array_used_pct: u32,
+    pub disk_count: u32,
+    pub parity_status: String,
+    pub parity_progress: u32,
+    pub parity_errors: u32,
+    pub containers_running: u32,
+    pub containers_total: u32,
+    pub vms_running: u32,
+    pub vms_total: u32,
+    pub notification_count: u32,
+    pub software_update_count: u32,
+    pub storage: Vec<UnraidStorageOut>,
+    pub disks: Vec<UnraidDiskOut>,
+    pub containers: Vec<UnraidContainerOut>,
+    pub vms: Vec<UnraidVmOut>,
+    pub notifications: Vec<UnraidNotificationOut>,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UnraidView {
+    pub kpis: Vec<Kpi>,
+    pub servers: Vec<UnraidServerOut>,
+    pub containers_running: u32,
+    pub containers_total: u32,
+    pub vms_running: u32,
+    pub vms_total: u32,
+    pub array_warn: u32,
+    pub software_update_count: u32,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct Alert {
     pub id: String,
     pub sev: String,
@@ -267,6 +391,7 @@ pub struct Snapshot {
     pub dashboard: Dashboard,
     pub proxmox: ProxmoxView,
     pub unifi: UnifiView,
+    pub unraid: UnraidView,
     pub topology: TopoNode,
     pub alerts: AlertsView,
     pub events: EventsView,
@@ -305,6 +430,7 @@ mod tests {
                 "dashboard",
                 "proxmox",
                 "unifi",
+                "unraid",
                 "topology",
                 "alerts",
                 "events",
@@ -360,6 +486,48 @@ mod tests {
                 "occurrences",
                 "assignee",
                 "rule",
+            ],
+        );
+        assert_keys(
+            &UnraidServerOut::default(),
+            &[
+                "name",
+                "source",
+                "host",
+                "status",
+                "lanIp",
+                "localUrl",
+                "version",
+                "apiVersion",
+                "kernel",
+                "uptime",
+                "cpuBrand",
+                "cpuCores",
+                "cpuThreads",
+                "cpu",
+                "mem",
+                "memory",
+                "temp",
+                "tempSensor",
+                "arrayState",
+                "arrayUsed",
+                "arrayTotal",
+                "arrayUsedPct",
+                "diskCount",
+                "parityStatus",
+                "parityProgress",
+                "parityErrors",
+                "containersRunning",
+                "containersTotal",
+                "vmsRunning",
+                "vmsTotal",
+                "notificationCount",
+                "softwareUpdateCount",
+                "storage",
+                "disks",
+                "containers",
+                "vms",
+                "notifications",
             ],
         );
     }

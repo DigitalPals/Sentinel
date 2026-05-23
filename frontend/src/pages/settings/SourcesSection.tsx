@@ -1,15 +1,18 @@
-// Infrastructure sources — UniFi controllers and Proxmox hosts.
+// Infrastructure sources — Unraid servers, UniFi controllers and Proxmox hosts.
 // Credentials are stored in the database; the form supports add, edit, delete,
 // and live test-connection.
 import React from "react";
 import {
   ProxmoxSource,
   SourcesData,
+  UnraidSource,
   UnifiSource,
   deleteProxmoxSource,
+  deleteUnraidSource,
   deleteUnifiSource,
   getSources,
   saveProxmoxSource,
+  saveUnraidSource,
   saveUnifiSource,
   testSource,
 } from "../../api";
@@ -23,15 +26,16 @@ function SourceForm({
   onCancel,
   onMsg,
 }: {
-  kind: "unifi" | "proxmox";
-  source: UnifiSource | ProxmoxSource | null;
+  kind: "unifi" | "proxmox" | "unraid";
+  source: UnifiSource | ProxmoxSource | UnraidSource | null;
   onDone: () => void;
   onCancel: () => void;
   onMsg: (tone: Tone, text: string) => void;
 }) {
   const isProxmox = kind === "proxmox";
+  const isUnraid = kind === "unraid";
   const editing = source != null;
-  const [name, setName] = React.useState(source?.name ?? (isProxmox ? "" : "UniFi"));
+  const [name, setName] = React.useState(source?.name ?? (isProxmox ? "" : isUnraid ? "Unraid" : "UniFi"));
   const [host, setHost] = React.useState(source?.host ?? "");
   const [tokenId, setTokenId] = React.useState((source as ProxmoxSource | null)?.tokenId ?? "");
   const [secret, setSecret] = React.useState("");
@@ -54,6 +58,13 @@ function SourceForm({
           tokenSecret: secret || undefined,
           enabled,
         });
+      } else if (isUnraid) {
+        await saveUnraidSource(editing ? source!.id : null, {
+          name,
+          host,
+          apiKey: secret || undefined,
+          enabled,
+        });
       } else {
         await saveUnifiSource(editing ? source!.id : null, {
           name,
@@ -62,7 +73,7 @@ function SourceForm({
           enabled,
         });
       }
-      onMsg("ok", `${isProxmox ? "Proxmox" : "UniFi"} source ${editing ? "updated" : "added"}.`);
+      onMsg("ok", `${isProxmox ? "Proxmox" : isUnraid ? "Unraid" : "UniFi"} source ${editing ? "updated" : "added"}.`);
       onDone();
     } catch (e: any) {
       onMsg("err", String(e?.message ?? e));
@@ -78,6 +89,8 @@ function SourceForm({
       const r = await testSource(
         isProxmox
           ? { kind, id: source?.id, host, tokenId, tokenSecret: secret || undefined }
+          : isUnraid
+            ? { kind, id: source?.id, host, apiKey: secret || undefined }
           : { kind, id: source?.id, host, apiKey: secret || undefined },
       );
       setTest({ tone: r.ok ? "ok" : "err", text: r.detail });
@@ -94,7 +107,16 @@ function SourceForm({
         <Field label="Name">
           <input className="set-input" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Host" hint="Include scheme and port, e.g. https://10.0.0.1:8006">
+        <Field
+          label="Host"
+          hint={
+            isProxmox
+              ? "Include scheme and port, e.g. https://10.0.0.1:8006"
+              : isUnraid
+                ? "Include scheme when known, e.g. https://10.10.0.40"
+                : "Include scheme and port when needed, e.g. https://10.0.0.1"
+          }
+        >
           <input
             className="set-input"
             value={host}
@@ -151,18 +173,19 @@ function SourceSection({
   onChanged,
   onMsg,
 }: {
-  kind: "unifi" | "proxmox";
-  sources: (UnifiSource | ProxmoxSource)[];
+  kind: "unifi" | "proxmox" | "unraid";
+  sources: (UnifiSource | ProxmoxSource | UnraidSource)[];
   onChanged: () => void;
   onMsg: (tone: Tone, text: string) => void;
 }) {
   const [editId, setEditId] = React.useState<number | "new" | null>(null);
-  const label = kind === "proxmox" ? "Proxmox VE" : "UniFi Network";
+  const label = kind === "proxmox" ? "Proxmox VE" : kind === "unraid" ? "Unraid" : "UniFi Network";
 
   const remove = async (id: number, name: string) => {
     if (!window.confirm(`Delete source "${name}"?`)) return;
     try {
       if (kind === "proxmox") await deleteProxmoxSource(id);
+      else if (kind === "unraid") await deleteUnraidSource(id);
       else await deleteUnifiSource(id);
       onMsg("ok", `Source "${name}" deleted.`);
       onChanged();
@@ -182,7 +205,7 @@ function SourceSection({
         <span>{label}</span>
         {editId !== "new" && (
           <button className="set-btn" onClick={() => setEditId("new")}>
-            + Add {kind === "proxmox" ? "host" : "controller"}
+            + Add {kind === "proxmox" ? "host" : kind === "unraid" ? "server" : "controller"}
           </button>
         )}
       </div>
@@ -253,12 +276,18 @@ export default function SourcesSection() {
       {msg && <div className={"set-banner " + msg.tone}>{msg.text}</div>}
       <Card
         title="Infrastructure Sources"
-        sub="UniFi and Proxmox endpoints Sentinel polls — credentials are stored in the database"
+        sub="Unraid, UniFi and Proxmox endpoints Sentinel polls — credentials are stored in the database"
       >
         <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 22 }}>
           {!sources && <div className="set-note">Loading…</div>}
           {sources && (
             <>
+              <SourceSection
+                kind="unraid"
+                sources={sources.unraid}
+                onChanged={reload}
+                onMsg={showMsg}
+              />
               <SourceSection
                 kind="unifi"
                 sources={sources.unifi}
