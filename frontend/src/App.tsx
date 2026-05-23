@@ -17,6 +17,7 @@ import {
 } from "./pages/settings/index";
 import { Onboarding, useOnboarding } from "./onboarding";
 import { Login } from "./Login";
+import logoUrl from "./assets/logo.svg";
 
 const PAGES: Record<string, { crumb: string; title: string }> = {
   dashboard: { crumb: "Overview / Cluster", title: "Operations Dashboard" },
@@ -115,7 +116,7 @@ export default function App() {
   if (!status) {
     return (
       <div className="boot">
-        <div className="brand-mark" />
+        <img src={logoUrl} alt="Cybex Sentinel" className="boot-logo" />
         {error ? (
           <div className="boot-msg err">
             Cannot reach the Sentinel backend — {error}. Retrying…
@@ -243,7 +244,7 @@ function AppBody({
       <>
         {onboardingEl}
         <div className="boot">
-          <div className="brand-mark" />
+          <img src={logoUrl} alt="Cybex Sentinel" className="boot-logo" />
           {error ? (
             <div className="boot-msg err">Cannot reach the Sentinel backend — {error}. Retrying…</div>
           ) : (

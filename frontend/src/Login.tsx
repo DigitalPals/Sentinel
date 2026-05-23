@@ -6,6 +6,7 @@
 // so the app can decide how much onboarding to show.
 import React from "react";
 import { authLogin, authSetup } from "./api";
+import logoUrl from "./assets/logo.svg";
 
 const MIN_PASSWORD_LEN = 8;
 
@@ -55,11 +56,8 @@ export function Login({
     <div className="onb-backdrop">
       <form className="onb-card login-card" onSubmit={submit}>
         <div className="onb-head">
-          <div className="brand-mark" />
-          <div>
-            <div className="brand-name">Cybex Sentinel</div>
-            <div className="brand-tag">{needsFirstUser ? "first-run setup" : "sign in"}</div>
-          </div>
+          <img src={logoUrl} alt="Cybex Sentinel" className="onb-logo" />
+          <div className="onb-tag">{needsFirstUser ? "first-run setup" : "sign in"}</div>
         </div>
 
         <div className="onb-body onb-step">

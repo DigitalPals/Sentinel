@@ -20,6 +20,7 @@ import {
   testSource,
 } from "./api";
 import { ACCENTS, type Accent, type Density, type Settings } from "./settings";
+import logoUrl from "./assets/logo.svg";
 
 type SetSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => void;
 type StepId = "welcome" | "proxmox" | "unifi" | "preferences" | "done";
@@ -423,11 +424,8 @@ export function Onboarding({
     <div className="onb-backdrop">
       <div className="onb-card">
         <div className="onb-head">
-          <div className="brand-mark" />
-          <div>
-            <div className="brand-name">Cybex Sentinel</div>
-            <div className="brand-tag">{justSetUp ? "first-run setup" : "finish setup"}</div>
-          </div>
+          <img src={logoUrl} alt="Cybex Sentinel" className="onb-logo" />
+          <div className="onb-tag">{justSetUp ? "first-run setup" : "finish setup"}</div>
           <div className="onb-dots">
             {steps.map((_, i) => (
               <span
