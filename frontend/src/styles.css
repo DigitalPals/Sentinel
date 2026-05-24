@@ -1511,45 +1511,63 @@ button.chip:hover { background: var(--surf-2); color: var(--fg); }
 }
 
 .tree-row {
+  --tree-gap: 8px;
+  --tree-row-pad-y: 6px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 12px 6px 0;
+  gap: var(--tree-gap);
+  padding: var(--tree-row-pad-y) 12px var(--tree-row-pad-y) 0;
   min-height: 30px;
   font-size: 12px;
   border-radius: 6px;
   position: relative;
 }
 .tree-row:hover { background: var(--surf-1); }
+.tree-row.tree-open::before {
+  content: "";
+  position: absolute;
+  left: var(--tree-child-guide-left);
+  top: 50%;
+  bottom: calc(0px - var(--tree-row-pad-y));
+  width: 1px;
+  background: var(--line-2);
+  pointer-events: none;
+}
 
 .tree-indent {
   display: flex;
+  align-self: stretch;
   flex-shrink: 0;
-  height: 30px;
+  min-height: 30px;
   position: relative;
 }
-.tree-bar {
+.tree-guide {
   display: block;
+  flex: 0 0 22px;
   width: 22px;
-  height: 30px;
+  min-height: 30px;
   position: relative;
 }
-.tree-bar::before {
+.tree-guide.continue::before,
+.tree-guide.elbow::before {
   content: "";
   position: absolute;
   left: 10px;
-  top: 0;
-  bottom: 0;
+  top: calc(0px - var(--tree-row-pad-y));
+  bottom: calc(0px - var(--tree-row-pad-y));
   width: 1px;
   background: var(--line-2);
 }
-/* Last bar (closest to the row) draws an L-shaped elbow */
-.tree-bar:last-child::after {
+.tree-guide.elbow.end::before {
+  bottom: 50%;
+}
+/* The current-depth guide draws the L-shaped branch into the row. */
+.tree-guide.elbow::after {
   content: "";
   position: absolute;
   left: 10px;
-  top: 15px;
-  width: 12px;
+  top: 50%;
+  width: calc(12px + var(--tree-gap) + 9px);
   height: 1px;
   background: var(--line-2);
 }

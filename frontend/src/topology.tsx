@@ -53,6 +53,7 @@ function TreeRow({
   forceOpen = false,
   query = "",
   compact = false,
+  branches = [],
 }: {
   node: TopoNode;
   depth?: number;
@@ -63,9 +64,12 @@ function TreeRow({
   forceOpen?: boolean;
   query?: string;
   compact?: boolean;
+  branches?: boolean[];
 }) {
   const kind = node.kind;
-  const hasChildren = (node.children || []).length > 0;
+  const children = node.children || [];
+  const visibleChildren = query ? children.filter((c) => subtreeMatches(c, query)) : children;
+  const hasChildren = visibleChildren.length > 0;
   const hasExpandedOverride = expandedTouched
     ? expandedTouched[node.id] === true
     : Object.prototype.hasOwnProperty.call(expanded, node.id);
@@ -89,12 +93,30 @@ function TreeRow({
     summary = { sw, ap };
   }
 
+  const rowStyle = {
+    "--tree-child-guide-left": `${depth * 22 + 10}px`,
+  } as React.CSSProperties;
+
   return (
     <>
-      <div className={"tree-row tree-d-" + Math.min(depth, 5)}>
+      <div
+        className={
+          "tree-row tree-d-" +
+          Math.min(depth, 5) +
+          (open && hasChildren ? " tree-open" : "")
+        }
+        style={rowStyle}
+      >
         <div className="tree-indent" style={{ width: depth * 22 }}>
-          {Array.from({ length: depth }).map((_, i) => (
-            <span key={i} className="tree-bar" />
+          {branches.map((continues, i) => (
+            <span
+              key={i}
+              className={
+                "tree-guide" +
+                (i === branches.length - 1 ? " elbow" : "") +
+                (continues ? " continue" : " end")
+              }
+            />
           ))}
         </div>
 
@@ -152,11 +174,12 @@ function TreeRow({
       </div>
 
       {open &&
-        (node.children || []).map((c) => (
+        visibleChildren.map((c, i) => (
           <TreeRow
             key={c.id}
             node={c}
             depth={depth + 1}
+            branches={[...branches, i < visibleChildren.length - 1]}
             expanded={expanded}
             expandedTouched={expandedTouched}
             onToggle={onToggle}
