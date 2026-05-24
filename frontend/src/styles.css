@@ -1454,6 +1454,38 @@ button.chip:hover { background: var(--surf-2); color: var(--fg); }
   padding: 6px 6px 10px;
 }
 .tree-list-modal { padding: 8px 8px 16px; }
+.topology-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.topology-card > .card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.tree-list-dashboard {
+  flex: 1;
+  height: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.tree-list-dashboard::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.topology-card .topo-foot {
+  flex-shrink: 0;
+}
 
 .tree-row {
   display: flex;

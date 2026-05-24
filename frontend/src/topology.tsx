@@ -72,7 +72,9 @@ function TreeRow({
   node,
   depth = 0,
   expanded,
+  expandedTouched,
   onToggle,
+  defaultOpenUntilDepth,
   forceOpen = false,
   query = "",
   compact = false,
@@ -80,14 +82,20 @@ function TreeRow({
   node: TopoNode;
   depth?: number;
   expanded: Record<string, boolean>;
-  onToggle: (id: string) => void;
+  expandedTouched?: Record<string, boolean>;
+  onToggle: (id: string, open: boolean) => void;
+  defaultOpenUntilDepth?: number;
   forceOpen?: boolean;
   query?: string;
   compact?: boolean;
 }) {
   const kind = node.kind;
   const hasChildren = (node.children || []).length > 0;
-  const open = forceOpen || expanded[node.id] !== false;
+  const hasExpandedOverride = expandedTouched
+    ? expandedTouched[node.id] === true
+    : Object.prototype.hasOwnProperty.call(expanded, node.id);
+  const defaultOpen = defaultOpenUntilDepth === undefined || depth <= defaultOpenUntilDepth;
+  const open = forceOpen || (hasExpandedOverride ? expanded[node.id] !== false : defaultOpen);
 
   if (query && !subtreeMatches(node, query)) return null;
 
@@ -117,7 +125,7 @@ function TreeRow({
 
         <button
           className="tree-twist"
-          onClick={() => hasChildren && onToggle(node.id)}
+          onClick={() => hasChildren && onToggle(node.id, open)}
           disabled={!hasChildren}
           aria-expanded={open}
         >
@@ -179,7 +187,9 @@ function TreeRow({
             node={c}
             depth={depth + 1}
             expanded={expanded}
+            expandedTouched={expandedTouched}
             onToggle={onToggle}
+            defaultOpenUntilDepth={defaultOpenUntilDepth}
             forceOpen={forceOpen}
             query={query}
             compact={compact}
@@ -192,18 +202,17 @@ function TreeRow({
 // ── Compact topology card (dashboard) ────────────────────────
 export function TopologyCard({ topo, onOpenFull }: { topo: TopoNode; onOpenFull: () => void }) {
   const counts = countTree(topo);
-  // Collapse branches below the first two levels so the card stays compact.
-  const [expanded, setExpanded] = React.useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = {};
-    const walk = (n: TopoNode, depth: number) => {
-      if ((n.children || []).length && depth > 1) init[n.id] = false;
-      (n.children || []).forEach((c) => walk(c, depth + 1));
-    };
-    if (topo && topo.id) walk(topo, 0);
-    return init;
-  });
-  const onToggle = (id: string) =>
-    setExpanded((e) => ({ ...e, [id]: e[id] === false ? true : false }));
+  const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
+  const [expandedTouched, setExpandedTouched] = React.useState<Record<string, boolean>>({});
+  const onToggle = (id: string, open: boolean) => {
+    setExpanded((e) => ({ ...e, [id]: !open }));
+    setExpandedTouched((e) => ({ ...e, [id]: true }));
+  };
+
+  React.useEffect(() => {
+    setExpanded({});
+    setExpandedTouched({});
+  }, [topo?.id]);
 
   if (!topo || !topo.id) {
     return (
@@ -215,6 +224,7 @@ export function TopologyCard({ topo, onOpenFull }: { topo: TopoNode; onOpenFull:
 
   return (
     <Card
+      className="topology-card"
       title="Network Topology"
       sub={`${topo.name} → ${counts.sw} switches → ${counts.ap} APs`}
       actions={
@@ -224,8 +234,16 @@ export function TopologyCard({ topo, onOpenFull }: { topo: TopoNode; onOpenFull:
       }
       tight
     >
-      <div className="tree-list">
-        <TreeRow node={topo} depth={0} expanded={expanded} onToggle={onToggle} compact />
+      <div className="tree-list tree-list-dashboard">
+        <TreeRow
+          node={topo}
+          depth={0}
+          expanded={expanded}
+          expandedTouched={expandedTouched}
+          onToggle={onToggle}
+          defaultOpenUntilDepth={3}
+          compact
+        />
       </div>
       <div className="topo-foot">
         <span className="mono">{counts.total} devices</span>
@@ -255,8 +273,8 @@ export function TopologyModal({ topo, onClose }: { topo: TopoNode; onClose: () =
   const [query, setQuery] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("all");
 
-  const onToggle = (id: string) =>
-    setExpanded((e) => ({ ...e, [id]: e[id] === false ? true : false }));
+  const onToggle = (id: string, open: boolean) =>
+    setExpanded((e) => ({ ...e, [id]: !open }));
 
   const allIds = React.useMemo(() => {
     const ids: string[] = [];

@@ -200,6 +200,7 @@ export function Card({
   sub,
   actions,
   children,
+  className,
   tight,
   style,
 }: {
@@ -207,11 +208,12 @@ export function Card({
   sub?: React.ReactNode;
   actions?: React.ReactNode;
   children?: React.ReactNode;
+  className?: string;
   tight?: boolean;
   style?: React.CSSProperties;
 }) {
   return (
-    <section className="card" style={style}>
+    <section className={"card" + (className ? " " + className : "")} style={style}>
       {(title || sub || actions) && (
         <div className="card-hd">
           {title && <div className="card-title">{title}</div>}

@@ -11,6 +11,27 @@ export function browserPushAvailable(): boolean {
 
 export function registerServiceWorker(): void {
   if (!("serviceWorker" in navigator)) return;
+  if (import.meta.env.DEV) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker
+        .getRegistrations()
+        .then((registrations) => registrations.forEach((registration) => registration.unregister()))
+        .catch(() => {});
+      if ("caches" in window) {
+        window.caches
+          .keys()
+          .then((keys) =>
+            Promise.all(
+              keys
+                .filter((key) => key.startsWith("sentinel-pwa-"))
+                .map((key) => window.caches.delete(key)),
+            ),
+          )
+          .catch(() => {});
+      }
+    });
+    return;
+  }
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/service-worker.js").catch(() => {});
   });

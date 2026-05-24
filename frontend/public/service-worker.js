@@ -1,4 +1,4 @@
-const CACHE_NAME = "sentinel-pwa-v1";
+const CACHE_NAME = "sentinel-pwa-v2";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/pwa-icon.svg"];
 
 self.addEventListener("install", (event) => {
