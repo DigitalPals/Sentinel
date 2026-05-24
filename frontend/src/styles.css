@@ -656,7 +656,6 @@ button.chip:hover { background: var(--surf-2); color: var(--fg); }
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior: contain;
 }
 .editable-grid-item.editing {
   outline: 1px dashed color-mix(in oklch, var(--accent) 50%, transparent);
@@ -1499,7 +1498,6 @@ button.chip:hover { background: var(--surf-2); color: var(--fg); }
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior: contain;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
