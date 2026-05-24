@@ -30,9 +30,9 @@ export function Sidebar({
 }) {
   const items = [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
-    { id: "unifi", label: "UniFi Network", icon: "network" },
-    { id: "proxmox", label: "Proxmox", icon: "server" },
-    { id: "unraid", label: "Unraid", icon: "storage" },
+    { id: "unifi", label: "UniFi Network", icon: "unifi" },
+    { id: "proxmox", label: "Proxmox", icon: "proxmox" },
+    { id: "unraid", label: "Unraid", icon: "unraid" },
   ];
   const utilities = [
     { id: "alerts", label: "Alerts", icon: "alert", badge: alertCount },
