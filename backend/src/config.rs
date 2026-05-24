@@ -95,6 +95,8 @@ pub struct UiPrefs {
     pub accent: String,
     pub density: String,
     pub show_spark: bool,
+    #[serde(default = "default_layouts")]
+    pub layouts: Value,
 }
 
 impl Default for UiPrefs {
@@ -103,8 +105,13 @@ impl Default for UiPrefs {
             accent: "cyan".to_string(),
             density: "regular".to_string(),
             show_spark: true,
+            layouts: default_layouts(),
         }
     }
+}
+
+fn default_layouts() -> Value {
+    Value::Object(serde_json::Map::new())
 }
 
 /// The fully-resolved configuration the backend runs on.

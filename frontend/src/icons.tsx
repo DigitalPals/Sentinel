@@ -127,6 +127,43 @@ const ICONS: Record<string, React.ReactElement> = {
       <circle cx="12" cy="8" r="1.2" />
     </svg>
   ),
+  layout: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <rect x="2" y="2" width="12" height="12" rx="1.5" />
+      <path d="M6.5 2v12M2 7h4.5M9 7h5" strokeLinecap="round" />
+    </svg>
+  ),
+  check: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M3.2 8.4l3 3.1 6.6-7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  plus: (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M8 3.2v9.6M3.2 8h9.6" strokeLinecap="round" />
+    </svg>
+  ),
+  trash: (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M2.8 4.2h10.4M6.2 4.2V2.8h3.6v1.4M4.4 4.2l.5 9h6.2l.5-9M6.7 6.6v4.4M9.3 6.6v4.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  grip: (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
+      <circle cx="5.2" cy="4" r="1" />
+      <circle cx="10.8" cy="4" r="1" />
+      <circle cx="5.2" cy="8" r="1" />
+      <circle cx="10.8" cy="8" r="1" />
+      <circle cx="5.2" cy="12" r="1" />
+      <circle cx="10.8" cy="12" r="1" />
+    </svg>
+  ),
+  reset: (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M4.2 4.6A5 5 0 1 1 3 8" strokeLinecap="round" />
+      <path d="M4.3 2.4v2.3h2.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
   menu: (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6">
       <path d="M3 4h10M3 8h10M3 12h10" strokeLinecap="round" />

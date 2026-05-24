@@ -278,7 +278,7 @@ export function KpiTile({
   );
 }
 
-const KPI_COLORS = [
+export const KPI_COLORS = [
   "oklch(0.76 0.16 152)",
   "oklch(0.78 0.13 232)",
   "oklch(0.7 0.21 26)",

@@ -9,7 +9,8 @@ import type {
   UnraidStorage,
   UnraidVm,
 } from "../api";
-import { Bar, Card, Chip, Icon, KpiGrid, MiniBar, StatusDot } from "../components";
+import { Bar, Card, Chip, Icon, KPI_COLORS, KpiTile, MiniBar, StatusDot } from "../components";
+import { EditableGrid, type EditableLayoutValue, type LayoutStore } from "../layouts";
 
 const KPI_LABELS = ["Servers Online", "Storage Usage", "Docker Containers", "VMs Running"];
 
@@ -111,7 +112,17 @@ const searchable = (...parts: Array<string | number | boolean | null | undefined
     .join(" ")
     .toLowerCase();
 
-export default function Unraid({ snap }: { snap: Snapshot }) {
+export default function Unraid({
+  snap,
+  editMode,
+  layoutStore,
+  onLayoutChange,
+}: {
+  snap: Snapshot;
+  editMode: boolean;
+  layoutStore: LayoutStore;
+  onLayoutChange: (pageId: string, layout: EditableLayoutValue) => void;
+}) {
   const u = snap.unraid;
   const [view, setView] = React.useState<View>("all");
   const [quick, setQuick] = React.useState<Quick>("");
@@ -144,11 +155,31 @@ export default function Unraid({ snap }: { snap: Snapshot }) {
     return true;
   };
 
-  return (
-    <div className="page">
-      <KpiGrid kpis={u.kpis} labels={KPI_LABELS} />
-
-      <Card tight>
+  const cards = [
+    ...KPI_LABELS.map((label, i) => ({
+      id: `kpi-${i}`,
+      label,
+      defaultSize: { w: 3, h: 2 },
+      minW: 2,
+      maxW: 6,
+      minH: 2,
+      maxH: 4,
+      content: (
+        <KpiTile
+          label={label}
+          kpi={u.kpis[i] || { display: "—", unit: "", sub: "", trend: 0, spark: [] }}
+          sparkColor={KPI_COLORS[i % KPI_COLORS.length]}
+        />
+      ),
+    })),
+    {
+      id: "unraid-resources",
+      label: "Unraid Resources",
+      defaultSize: { w: 12, h: 8 },
+      minW: 6,
+      minH: 4,
+      content: (
+        <Card tight>
         <div className="tabs unraid-tabs">
           {([
             ["all", allRows.length],
@@ -290,7 +321,20 @@ export default function Unraid({ snap }: { snap: Snapshot }) {
             );
           })}
         </div>
-      </Card>
+        </Card>
+      ),
+    },
+  ];
+
+  return (
+    <div className="page">
+      <EditableGrid
+        pageId="unraid"
+        editMode={editMode}
+        items={cards}
+        layoutStore={layoutStore}
+        onLayoutChange={onLayoutChange}
+      />
     </div>
   );
 }

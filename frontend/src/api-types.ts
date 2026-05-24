@@ -345,7 +345,25 @@ export interface UiPrefs {
   accent: string;
   density: string;
   showSpark: boolean;
+  layouts: EditableLayoutStore;
 }
+
+export interface EditableLayoutItem {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  hidden?: boolean;
+}
+
+export interface EditableLayoutValue {
+  version: number;
+  items: EditableLayoutItem[];
+  updatedAt?: string;
+}
+
+export type EditableLayoutStore = Record<string, EditableLayoutValue>;
 
 export interface EmailNotificationSettings {
   enabled: boolean;

@@ -1,7 +1,8 @@
 // Cybex Sentinel — UniFi network devices.
 import React from "react";
 import type { Snapshot, UniDevice } from "../api";
-import { Bar, Card, Chip, Icon, KpiGrid, fmtMbps } from "../components";
+import { Bar, Card, Chip, Icon, KPI_COLORS, KpiTile, fmtMbps } from "../components";
+import { EditableGrid, type EditableLayoutValue, type LayoutStore } from "../layouts";
 
 const KPI_LABELS = ["Devices Adopted", "Wireless Clients", "Active PoE Ports", "WAN Throughput"];
 
@@ -18,7 +19,17 @@ const typeIcon = (kind: string) =>
 
 const statusLabel = (s: string) => (s === "ok" ? "Online" : s === "warn" ? "Warning" : "Offline");
 
-export default function Unifi({ snap }: { snap: Snapshot }) {
+export default function Unifi({
+  snap,
+  editMode,
+  layoutStore,
+  onLayoutChange,
+}: {
+  snap: Snapshot;
+  editMode: boolean;
+  layoutStore: LayoutStore;
+  onLayoutChange: (pageId: string, layout: EditableLayoutValue) => void;
+}) {
   const u = snap.unifi;
   const all = u.devices;
   const [filter, setFilter] = React.useState("All");
@@ -40,11 +51,30 @@ export default function Unifi({ snap }: { snap: Snapshot }) {
 
   const sel: UniDevice | undefined = filtered.find((d) => d.id === selectedId) || filtered[0];
 
-  return (
-    <div className="page">
-      <KpiGrid kpis={u.kpis} labels={KPI_LABELS} />
-
-      <div className="split">
+  const cards = [
+    ...KPI_LABELS.map((label, i) => ({
+      id: `kpi-${i}`,
+      label,
+      defaultSize: { w: 3, h: 2 },
+      minW: 2,
+      maxW: 6,
+      minH: 2,
+      maxH: 4,
+      content: (
+        <KpiTile
+          label={label}
+          kpi={u.kpis[i] || { display: "—", unit: "", sub: "", trend: 0, spark: [] }}
+          sparkColor={KPI_COLORS[i % KPI_COLORS.length]}
+        />
+      ),
+    })),
+    {
+      id: "device-list",
+      label: "Device List",
+      defaultSize: { w: 8, h: 7 },
+      minW: 6,
+      minH: 4,
+      content: (
         <Card tight>
           <div className="filters">
             {types.map((t) => (
@@ -147,9 +177,33 @@ export default function Unifi({ snap }: { snap: Snapshot }) {
             </table>
           </div>
         </Card>
+      ),
+    },
+    {
+      id: "device-detail",
+      label: "Device Detail",
+      defaultSize: { w: 4, h: 7 },
+      minW: 3,
+      minH: 4,
+      content: sel ? (
+        <DeviceDetail device={sel} />
+      ) : (
+        <Card tight>
+          <div className="empty-row">No device selected.</div>
+        </Card>
+      ),
+    },
+  ];
 
-        {sel && <DeviceDetail device={sel} />}
-      </div>
+  return (
+    <div className="page">
+      <EditableGrid
+        pageId="unifi"
+        editMode={editMode}
+        items={cards}
+        layoutStore={layoutStore}
+        onLayoutChange={onLayoutChange}
+      />
     </div>
   );
 }

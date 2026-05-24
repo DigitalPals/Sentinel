@@ -1,11 +1,22 @@
 // Cybex Sentinel — Proxmox servers & guests.
 import React from "react";
 import type { Guest, Snapshot } from "../api";
-import { Card, Chip, Icon, KpiGrid, MiniBar, StatusDot } from "../components";
+import { Card, Chip, Icon, KPI_COLORS, KpiTile, MiniBar, StatusDot } from "../components";
+import { EditableGrid, type EditableLayoutValue, type LayoutStore } from "../layouts";
 
 const KPI_LABELS = ["Nodes Online", "Virtual Machines", "LXC Containers", "Cluster Storage"];
 
-export default function Proxmox({ snap }: { snap: Snapshot }) {
+export default function Proxmox({
+  snap,
+  editMode,
+  layoutStore,
+  onLayoutChange,
+}: {
+  snap: Snapshot;
+  editMode: boolean;
+  layoutStore: LayoutStore;
+  onLayoutChange: (pageId: string, layout: EditableLayoutValue) => void;
+}) {
   const p = snap.proxmox;
   const [view, setView] = React.useState<"all" | "vm" | "lxc">("all");
   const [quick, setQuick] = React.useState<"" | "running" | "stopped" | "highcpu" | "highmem">("");
@@ -33,11 +44,31 @@ export default function Proxmox({ snap }: { snap: Snapshot }) {
     return true;
   };
 
-  return (
-    <div className="page">
-      <KpiGrid kpis={p.kpis} labels={KPI_LABELS} />
-
-      <Card tight>
+  const cards = [
+    ...KPI_LABELS.map((label, i) => ({
+      id: `kpi-${i}`,
+      label,
+      defaultSize: { w: 3, h: 2 },
+      minW: 2,
+      maxW: 6,
+      minH: 2,
+      maxH: 4,
+      content: (
+        <KpiTile
+          label={label}
+          kpi={p.kpis[i] || { display: "—", unit: "", sub: "", trend: 0, spark: [] }}
+          sparkColor={KPI_COLORS[i % KPI_COLORS.length]}
+        />
+      ),
+    })),
+    {
+      id: "guest-inventory",
+      label: "Guest Inventory",
+      defaultSize: { w: 12, h: 8 },
+      minW: 6,
+      minH: 4,
+      content: (
+        <Card tight>
         <div className="tabs">
           <button className={"tab " + (view === "all" ? "active" : "")} onClick={() => setView("all")}>
             All guests <span className="count">{counts.vm + counts.lxc}</span>
@@ -196,7 +227,20 @@ export default function Proxmox({ snap }: { snap: Snapshot }) {
             </div>
           );
         })}
-      </Card>
+        </Card>
+      ),
+    },
+  ];
+
+  return (
+    <div className="page">
+      <EditableGrid
+        pageId="proxmox"
+        editMode={editMode}
+        items={cards}
+        layoutStore={layoutStore}
+        onLayoutChange={onLayoutChange}
+      />
     </div>
   );
 }

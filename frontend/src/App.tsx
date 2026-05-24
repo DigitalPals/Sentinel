@@ -1,7 +1,8 @@
 // Cybex Sentinel — app shell, authentication gate, routing and live snapshot wiring.
 import React from "react";
 import { authLogout, getAuthStatus, useSnapshot, type AuthStatus } from "./api";
-import { Sidebar, Topbar } from "./components";
+import { Icon, Sidebar, Topbar } from "./components";
+import type { EditableLayoutValue } from "./layouts";
 import { SettingsPanel, useSettings } from "./settings";
 import Dashboard from "./pages/Dashboard";
 import Unifi from "./pages/Unifi";
@@ -29,6 +30,8 @@ const PAGES: Record<string, { crumb: string; title: string }> = {
   logs: { crumb: "Operations / Events & Logs", title: "Events & Logs" },
   settings: { crumb: "System / Configuration", title: "Settings" },
 };
+
+const EDITABLE_PAGES = new Set(["dashboard", "unifi", "proxmox", "unraid"]);
 
 /** Resolve the active page from the URL path, with legacy #hash fallback. */
 function resolvePage(): string {
@@ -166,6 +169,7 @@ function AppBody({
   const [settingsSection, setSettingsSection] =
     React.useState<SectionId>(resolveSettingsSection);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [layoutEditingPage, setLayoutEditingPage] = React.useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(() => {
     try {
@@ -265,6 +269,19 @@ function AppBody({
     };
   }, []);
 
+  const editablePage = EDITABLE_PAGES.has(page);
+  const editMode = editablePage && layoutEditingPage === page;
+  const savePageLayout = React.useCallback(
+    (pageId: string, layout: EditableLayoutValue) => {
+      setSetting("layouts", { ...(settings.layouts ?? {}), [pageId]: layout });
+    },
+    [setSetting, settings.layouts],
+  );
+
+  React.useEffect(() => {
+    setLayoutEditingPage((current) => (editablePage && current === page ? current : null));
+  }, [editablePage, page]);
+
   const onboardingEl = onboarding.show ? (
     <Onboarding
       justSetUp={justSetUp}
@@ -311,13 +328,34 @@ function AppBody({
   let pageEl: React.ReactNode;
   switch (page) {
     case "unifi":
-      pageEl = <Unifi snap={snap} />;
+      pageEl = (
+        <Unifi
+          snap={snap}
+          editMode={editMode}
+          layoutStore={settings.layouts}
+          onLayoutChange={savePageLayout}
+        />
+      );
       break;
     case "proxmox":
-      pageEl = <Proxmox snap={snap} />;
+      pageEl = (
+        <Proxmox
+          snap={snap}
+          editMode={editMode}
+          layoutStore={settings.layouts}
+          onLayoutChange={savePageLayout}
+        />
+      );
       break;
     case "unraid":
-      pageEl = <Unraid snap={snap} />;
+      pageEl = (
+        <Unraid
+          snap={snap}
+          editMode={editMode}
+          layoutStore={settings.layouts}
+          onLayoutChange={savePageLayout}
+        />
+      );
       break;
     case "alerts":
       pageEl = <Alerts snap={snap} refresh={refresh} />;
@@ -336,7 +374,14 @@ function AppBody({
       );
       break;
     default:
-      pageEl = <Dashboard snap={snap} />;
+      pageEl = (
+        <Dashboard
+          snap={snap}
+          editMode={editMode}
+          layoutStore={settings.layouts}
+          onLayoutChange={savePageLayout}
+        />
+      );
   }
 
   return (
@@ -377,6 +422,18 @@ function AppBody({
             onSettings={() => setSettingsOpen(true)}
             onAlerts={() => navigate("alerts")}
             onLogout={onLogout}
+            actions={
+              editablePage ? (
+                <button
+                  className={"icon-btn" + (editMode ? " active" : "")}
+                  title={editMode ? "Finish editing layout" : "Edit layout"}
+                  aria-pressed={editMode}
+                  onClick={() => setLayoutEditingPage(editMode ? null : page)}
+                >
+                  <Icon name={editMode ? "check" : "layout"} />
+                </button>
+              ) : undefined
+            }
           />
           {stale && (
             <div style={{ padding: "16px 28px 0" }}>

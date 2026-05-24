@@ -3,6 +3,7 @@
 // across browsers; applied as CSS custom properties.
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "./api";
+import type { EditableLayoutStore } from "./api-types";
 
 export type Accent = "cyan" | "amber" | "violet" | "mint";
 export type Density = "compact" | "regular" | "comfy";
@@ -11,9 +12,10 @@ export interface Settings {
   accent: Accent;
   density: Density;
   showSpark: boolean;
+  layouts: EditableLayoutStore;
 }
 
-const DEFAULTS: Settings = { accent: "cyan", density: "regular", showSpark: true };
+const DEFAULTS: Settings = { accent: "cyan", density: "regular", showSpark: true, layouts: {} };
 
 export const ACCENTS: Record<Accent, { accent: string; accent2: string; swatch: [string, string] }> = {
   cyan: { accent: "oklch(0.82 0.15 200)", accent2: "oklch(0.66 0.18 270)", swatch: ["#7adfff", "#a08bff"] },
