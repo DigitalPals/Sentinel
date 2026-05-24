@@ -103,6 +103,27 @@ function defaultItem(def: EditableCardDefinition): EditableLayoutItem {
   );
 }
 
+function compactVisibleItems(items: EditableLayoutItem[]): EditableLayoutItem[] {
+  const visible = items
+    .filter((item) => !item.hidden)
+    .sort((a, b) => a.y - b.y || a.x - b.x || a.id.localeCompare(b.id));
+  const placed: EditableLayoutItem[] = [];
+  const compactedById = new Map<string, EditableLayoutItem>();
+
+  for (const item of visible) {
+    let compacted = item;
+    while (compacted.y > 0) {
+      const candidate = { ...compacted, y: compacted.y - 1 };
+      if (collides(candidate, placed)) break;
+      compacted = candidate;
+    }
+    placed.push(compacted);
+    compactedById.set(item.id, compacted);
+  }
+
+  return items.map((item) => compactedById.get(item.id) ?? item);
+}
+
 function overlaps(a: EditableLayoutItem, b: EditableLayoutItem): boolean {
   return (
     a.x < b.x + b.w &&
@@ -173,12 +194,16 @@ function normalizeLayout(
   const defsById = new Map(definitions.map((def) => [def.id, def]));
   const used = new Set<string>();
   const items: EditableLayoutItem[] = [];
+  let shouldCompact = false;
 
   for (const item of saved?.items ?? []) {
     const def = defsById.get(item.id);
     if (!def || used.has(def.id)) continue;
     const hadPosition = hasGridPosition(item);
     let normalized = clampItem(item, def);
+    if (!normalized.hidden && Math.round(item.h || def.defaultSize.h) > normalized.h) {
+      shouldCompact = true;
+    }
     if (!normalized.hidden && (!hadPosition || collides(normalized, items))) {
       normalized = firstFreeSpot(normalized, items);
     }
@@ -193,7 +218,11 @@ function normalizeLayout(
     }
   }
 
-  return { version: VERSION, items, updatedAt: saved?.updatedAt };
+  return {
+    version: VERSION,
+    items: shouldCompact ? compactVisibleItems(items) : items,
+    updatedAt: saved?.updatedAt,
+  };
 }
 
 function defaultLayout(definitions: EditableCardDefinition[]): EditableLayoutValue {

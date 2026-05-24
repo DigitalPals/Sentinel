@@ -55,11 +55,11 @@ export default function Unifi({
     ...KPI_LABELS.map((label, i) => ({
       id: `kpi-${i}`,
       label,
-      defaultSize: { w: 3, h: 2 },
+      defaultSize: { w: 3, h: 1 },
       minW: 2,
       maxW: 6,
-      minH: 2,
-      maxH: 4,
+      minH: 1,
+      maxH: 1,
       content: (
         <KpiTile
           label={label}
