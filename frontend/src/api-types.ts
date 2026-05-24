@@ -420,6 +420,105 @@ export interface AppSettings {
   thresholds: Record<string, number>;
   ui: UiPrefs;
   notifications: NotificationSettings;
+  networkScanner: NetworkScannerSettings;
+}
+
+export type DiscoveryMethod = "auto" | "arp" | "icmpTcp";
+export type PortProfile = "fast" | "top100" | "top1000" | "custom";
+export type PortScanTechnique = "syn" | "connect";
+
+export interface NetworkDiscoverySettings {
+  method: DiscoveryMethod;
+  dnsResolution: boolean;
+  dnsServers: string[];
+  maxRetries: number;
+  hostTimeoutMs: number;
+  overallTimeoutSec: number;
+  timingTemplate: number;
+  minRate: number;
+}
+
+export interface NetworkPortScanSettings {
+  enabled: boolean;
+  profile: PortProfile;
+  ports: string;
+  serviceDetection: boolean;
+  osDetection: boolean;
+  scanTechnique: PortScanTechnique;
+  udpScan: boolean;
+  onlyScanDiscovered: boolean;
+  skipHostDiscovery: boolean;
+}
+
+export interface NetworkScanSchedule {
+  enabled: boolean;
+  intervalMinutes: number;
+  runAtStart: boolean;
+}
+
+export interface NetworkScannerSettings {
+  enabled: boolean;
+  ranges: string[];
+  exclude: string[];
+  discovery: NetworkDiscoverySettings;
+  portScan: NetworkPortScanSettings;
+  schedule: NetworkScanSchedule;
+  retentionDays: number;
+}
+
+export interface NetworkScanSummary {
+  scanner: string;
+  rangeCount: number;
+  hostsUp: number;
+  openPorts: number;
+  durationMs: number;
+  discoveryMethod: DiscoveryMethod;
+  portScanEnabled: boolean;
+}
+
+export interface NetworkScanJob {
+  id: number;
+  status: string;
+  trigger: string;
+  summary: NetworkScanSummary | null;
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface NetworkScanPort {
+  protocol: string;
+  port: number;
+  state: string;
+  service: string | null;
+  product: string | null;
+  version: string | null;
+}
+
+export interface NetworkScanDevice {
+  id: number;
+  jobId: number | null;
+  ip: string;
+  hostname: string | null;
+  mac: string | null;
+  vendor: string | null;
+  status: string;
+  discoveryMethod: string;
+  latencyMs: number | null;
+  ports: NetworkScanPort[];
+  osGuess: string | null;
+  firstSeen: string | null;
+  lastSeen: string;
+}
+
+export interface NetworkScannerOverview {
+  settings: NetworkScannerSettings;
+  activeJob: NetworkScanJob | null;
+  latestJob: NetworkScanJob | null;
+  jobs: NetworkScanJob[];
+  devices: NetworkScanDevice[];
+  inventory: NetworkScanDevice[];
 }
 
 export interface UnifiSource {

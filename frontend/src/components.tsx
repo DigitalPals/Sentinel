@@ -31,6 +31,7 @@ export function Sidebar({
   const items = [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
     { id: "unifi", label: "UniFi Network", icon: "unifi" },
+    { id: "network-scanner", label: "Network Scanner", icon: "scan" },
     { id: "proxmox", label: "Proxmox", icon: "proxmox" },
     { id: "unraid", label: "Unraid", icon: "unraid" },
   ];

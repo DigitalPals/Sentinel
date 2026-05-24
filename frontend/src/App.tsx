@@ -6,6 +6,7 @@ import type { EditableLayoutValue } from "./layouts";
 import { SettingsPanel, useSettings } from "./settings";
 import Dashboard from "./pages/Dashboard";
 import Unifi from "./pages/Unifi";
+import NetworkScanner from "./pages/NetworkScanner";
 import Proxmox from "./pages/Proxmox";
 import Unraid from "./pages/Unraid";
 import Alerts from "./pages/Alerts";
@@ -24,6 +25,7 @@ import logoUrl from "./assets/logo.svg";
 const PAGES: Record<string, { crumb: string; title: string }> = {
   dashboard: { crumb: "Overview / Cluster", title: "Operations Dashboard" },
   unifi: { crumb: "Network / UniFi", title: "UniFi Network Devices" },
+  "network-scanner": { crumb: "Network / Scanner", title: "Network Scanner" },
   proxmox: { crumb: "Compute / Proxmox VE", title: "Proxmox Servers & Guests" },
   unraid: { crumb: "Storage / Unraid", title: "Unraid Servers" },
   alerts: { crumb: "Operations / Alerts", title: "Alerts" },
@@ -346,6 +348,9 @@ function AppBody({
           onLayoutChange={savePageLayout}
         />
       );
+      break;
+    case "network-scanner":
+      pageEl = <NetworkScanner onConfigure={() => navigate("settings", "network-scanner")} />;
       break;
     case "unraid":
       pageEl = (

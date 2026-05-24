@@ -2134,6 +2134,154 @@ html.is-scrolling * { scrollbar-color: var(--line-2) transparent; }
 
 .scroll-area { overflow: auto; }
 
+/* ── Network scanner ───────────────────────────────────────── */
+.network-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.network-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.network-toolbar .set-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.network-scope {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1;
+}
+.network-kpis {
+  margin-bottom: 0;
+}
+.network-device-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.network-search {
+  width: min(320px, 100%);
+}
+.network-device-table {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.network-device-head,
+.network-device-row {
+  display: grid;
+  grid-template-columns:
+    minmax(120px, .9fr)
+    minmax(150px, 1.1fr)
+    minmax(180px, 1.2fr)
+    minmax(86px, .6fr)
+    minmax(220px, 1.5fr)
+    minmax(156px, 1fr);
+  gap: 14px;
+  align-items: center;
+  min-width: 960px;
+}
+.network-device-head {
+  padding: 10px 14px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.network-device-row {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.network-device-row:last-child {
+  border-bottom: 0;
+}
+.network-device-row:hover {
+  background: var(--surf-1);
+}
+.network-ip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  color: var(--fg);
+}
+.network-primary {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.network-muted {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.network-mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-1);
+}
+.network-ports {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.network-active {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-2);
+}
+.network-error {
+  margin-top: 4px;
+  color: var(--crit);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.network-empty {
+  padding: 18px;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .network-toolbar {
+    align-items: stretch;
+  }
+  .network-toolbar .set-btn {
+    flex: 1;
+    justify-content: center;
+  }
+  .network-kpis {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ════════════════════════════════════════════════════════════════
  * Density modes (Settings panel) — scale spacing, not just font size
  * ════════════════════════════════════════════════════════════════ */

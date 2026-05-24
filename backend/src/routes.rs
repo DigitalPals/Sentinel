@@ -23,6 +23,7 @@ use crate::config::{
 };
 use crate::db;
 use crate::engine::{patch_alerts, AppState};
+use crate::network_scanner::{self, settings_to_value, NetworkScanPort, NetworkScannerSettings};
 use crate::notify::{
     self, NotificationChannel, NotificationSettingsPublic, NotificationSettingsUpdate,
 };
@@ -46,6 +47,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/health", get(health))
         .route("/api/alerts/action", post(alert_action))
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/network-scanner", get(get_network_scanner))
+        .route("/api/network-scanner/scan", post(start_network_scan))
+        .route(
+            "/api/network-scanner/jobs/:id/cancel",
+            post(cancel_network_scan),
+        )
         .route("/api/notifications/test", post(test_notification))
         .route("/api/push/status", get(push_status))
         .route(
@@ -185,6 +192,7 @@ struct SettingsResponse {
     thresholds: AlertThresholds,
     ui: UiPrefs,
     notifications: NotificationSettingsPublic,
+    network_scanner: NetworkScannerSettings,
 }
 
 fn settings_response(c: &RuntimeConfig) -> SettingsResponse {
@@ -198,6 +206,7 @@ fn settings_response(c: &RuntimeConfig) -> SettingsResponse {
         thresholds: c.thresholds.clone(),
         ui: c.ui_prefs.clone(),
         notifications: c.notifications.public(),
+        network_scanner: c.network_scanner.clone(),
     }
 }
 
@@ -218,6 +227,7 @@ struct SettingsUpdate {
     thresholds: Option<AlertThresholds>,
     ui: Option<UiPrefs>,
     notifications: Option<NotificationSettingsUpdate>,
+    network_scanner: Option<NetworkScannerSettings>,
 }
 
 /// Update one or more settings. Changes take effect on the next poll; `bind`
@@ -262,6 +272,11 @@ async fn put_settings(
         }
         let value = serde_json::to_value(notifications).map_err(|e| anyhow::anyhow!(e))?;
         db::set_setting(pool, "notifications", &value).await?;
+    }
+    if let Some(v) = req.network_scanner {
+        let value = settings_to_value(&v)
+            .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
+        db::set_setting(pool, network_scanner::SETTINGS_KEY, &value).await?;
     }
     refresh_config(&state).await?;
     Ok(Json(settings_response(&state.config())))
@@ -388,6 +403,141 @@ async fn delete_push_subscription(
     }
     let deleted = db::delete_push_subscription(&state.pool, req.endpoint.trim()).await?;
     Ok(Json(json!({ "ok": true, "deleted": deleted })))
+}
+
+// ── Network scanner ─────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkScanJobOut {
+    id: i64,
+    status: String,
+    trigger: String,
+    summary: Option<serde_json::Value>,
+    error: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    started_at: Option<chrono::DateTime<chrono::Utc>>,
+    finished_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl From<db::NetworkScanJobRow> for NetworkScanJobOut {
+    fn from(r: db::NetworkScanJobRow) -> Self {
+        Self {
+            id: r.id,
+            status: r.status,
+            trigger: r.trigger,
+            summary: r.summary,
+            error: r.error,
+            created_at: r.created_at,
+            started_at: r.started_at,
+            finished_at: r.finished_at,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkScanDeviceOut {
+    id: i64,
+    job_id: Option<i64>,
+    ip: String,
+    hostname: Option<String>,
+    mac: Option<String>,
+    vendor: Option<String>,
+    status: String,
+    discovery_method: String,
+    latency_ms: Option<f64>,
+    ports: Vec<NetworkScanPort>,
+    os_guess: Option<String>,
+    first_seen: Option<chrono::DateTime<chrono::Utc>>,
+    last_seen: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<db::NetworkScanDeviceRow> for NetworkScanDeviceOut {
+    fn from(r: db::NetworkScanDeviceRow) -> Self {
+        Self {
+            id: r.id,
+            job_id: r.job_id,
+            ip: r.ip,
+            hostname: r.hostname,
+            mac: r.mac,
+            vendor: r.vendor,
+            status: r.status,
+            discovery_method: r.discovery_method,
+            latency_ms: r.latency_ms,
+            ports: serde_json::from_value(r.ports).unwrap_or_default(),
+            os_guess: r.os_guess,
+            first_seen: r.first_seen,
+            last_seen: r.last_seen,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkScannerResponse {
+    settings: NetworkScannerSettings,
+    active_job: Option<NetworkScanJobOut>,
+    latest_job: Option<NetworkScanJobOut>,
+    jobs: Vec<NetworkScanJobOut>,
+    devices: Vec<NetworkScanDeviceOut>,
+    inventory: Vec<NetworkScanDeviceOut>,
+}
+
+async fn get_network_scanner(
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<NetworkScannerResponse> {
+    let active = db::active_network_scan_job(&state.pool).await?;
+    let latest = db::latest_completed_network_scan_job(&state.pool).await?;
+    let devices = match latest.as_ref() {
+        Some(job) => db::network_scan_devices(&state.pool, job.id).await?,
+        None => Vec::new(),
+    };
+    let jobs = db::recent_network_scan_jobs(&state.pool, 20).await?;
+    let inventory = db::network_scan_inventory(&state.pool).await?;
+    Ok(Json(NetworkScannerResponse {
+        settings: state.config().network_scanner.clone(),
+        active_job: active.map(Into::into),
+        latest_job: latest.map(Into::into),
+        jobs: jobs.into_iter().map(Into::into).collect(),
+        devices: devices.into_iter().map(Into::into).collect(),
+        inventory: inventory.into_iter().map(Into::into).collect(),
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartNetworkScanReq {
+    settings: Option<NetworkScannerSettings>,
+    force: Option<bool>,
+}
+
+async fn start_network_scan(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<StartNetworkScanReq>,
+) -> ApiResult<serde_json::Value> {
+    let scanner = req
+        .settings
+        .unwrap_or_else(|| state.config().network_scanner.clone())
+        .normalized()
+        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
+    if !scanner.enabled && !req.force.unwrap_or(false) {
+        return Err(bad_request("network scanner is disabled"));
+    }
+    let value = serde_json::to_value(&scanner).map_err(|e| anyhow::anyhow!(e))?;
+    let id = db::enqueue_network_scan_job(&state.pool, "manual", &value).await?;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn cancel_network_scan(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> ApiResult<serde_json::Value> {
+    let canceled = db::cancel_network_scan_job(&state.pool, id).await?;
+    if !canceled {
+        return Err(bad_request("only queued network scan jobs can be canceled"));
+    }
+    Ok(Json(json!({ "ok": true })))
 }
 
 // ── Sources ─────────────────────────────────────────────────────────────────

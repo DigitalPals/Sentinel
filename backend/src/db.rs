@@ -10,6 +10,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use chrono::{DateTime, Utc};
+use serde::Serialize;
+use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{FromRow, PgPool, Row};
 
@@ -393,6 +395,326 @@ pub async fn delete_unraid_source(pool: &PgPool, id: i64) -> anyhow::Result<bool
         .await
         .context("deleting Unraid source")?;
     Ok(res.rows_affected() > 0)
+}
+
+// ── Network scanner ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkScanJobRow {
+    pub id: i64,
+    pub status: String,
+    pub trigger: String,
+    pub settings: Value,
+    pub summary: Option<Value>,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct NetworkScanDeviceRow {
+    pub id: i64,
+    pub job_id: Option<i64>,
+    pub ip: String,
+    pub hostname: Option<String>,
+    pub mac: Option<String>,
+    pub vendor: Option<String>,
+    pub status: String,
+    pub discovery_method: String,
+    pub latency_ms: Option<f64>,
+    pub ports: Value,
+    pub os_guess: Option<String>,
+    pub first_seen: Option<DateTime<Utc>>,
+    pub last_seen: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NetworkScanDevicePersist {
+    pub ip: String,
+    pub hostname: Option<String>,
+    pub mac: Option<String>,
+    pub vendor: Option<String>,
+    pub status: String,
+    pub discovery_method: String,
+    pub latency_ms: Option<f64>,
+    pub ports: Value,
+    pub os_guess: Option<String>,
+    pub raw: Value,
+}
+
+pub async fn enqueue_network_scan_job(
+    pool: &PgPool,
+    trigger: &str,
+    settings: &Value,
+) -> anyhow::Result<i64> {
+    let row = sqlx::query(
+        "INSERT INTO network_scan_jobs (trigger, settings) VALUES ($1, $2::jsonb) RETURNING id",
+    )
+    .bind(trigger)
+    .bind(settings)
+    .fetch_one(pool)
+    .await
+    .context("queueing network scan job")?;
+    Ok(row.get("id"))
+}
+
+pub async fn try_claim_network_scan_job(
+    pool: &PgPool,
+) -> anyhow::Result<Option<NetworkScanJobRow>> {
+    sqlx::query_as::<_, NetworkScanJobRow>(
+        "WITH next_job AS ( \
+           SELECT id FROM network_scan_jobs \
+           WHERE status = 'queued' \
+           ORDER BY created_at \
+           FOR UPDATE SKIP LOCKED \
+           LIMIT 1 \
+         ) \
+         UPDATE network_scan_jobs j \
+         SET status = 'running', started_at = now(), updated_at = now(), error = NULL \
+         FROM next_job \
+         WHERE j.id = next_job.id \
+         RETURNING j.id, j.status, j.trigger, j.settings, j.summary, j.error, \
+                   j.created_at, j.started_at, j.finished_at",
+    )
+    .fetch_optional(pool)
+    .await
+    .context("claiming network scan job")
+}
+
+pub async fn complete_network_scan_job(
+    pool: &PgPool,
+    id: i64,
+    summary: &Value,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE network_scan_jobs \
+         SET status = 'succeeded', summary = $2::jsonb, finished_at = now(), updated_at = now() \
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(summary)
+    .execute(pool)
+    .await
+    .context("marking network scan job complete")?;
+    Ok(())
+}
+
+pub async fn fail_network_scan_job(pool: &PgPool, id: i64, error: &str) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE network_scan_jobs \
+         SET status = 'failed', error = $2, finished_at = now(), updated_at = now() \
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(error)
+    .execute(pool)
+    .await
+    .context("marking network scan job failed")?;
+    Ok(())
+}
+
+pub async fn cancel_network_scan_job(pool: &PgPool, id: i64) -> anyhow::Result<bool> {
+    let res = sqlx::query(
+        "UPDATE network_scan_jobs \
+         SET status = 'canceled', finished_at = now(), updated_at = now() \
+         WHERE id = $1 AND status = 'queued'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .context("canceling network scan job")?;
+    Ok(res.rows_affected() > 0)
+}
+
+pub async fn recent_network_scan_jobs(
+    pool: &PgPool,
+    limit: i64,
+) -> anyhow::Result<Vec<NetworkScanJobRow>> {
+    sqlx::query_as::<_, NetworkScanJobRow>(
+        "SELECT id, status, trigger, settings, summary, error, created_at, started_at, finished_at \
+         FROM network_scan_jobs ORDER BY created_at DESC LIMIT $1",
+    )
+    .bind(limit.max(1))
+    .fetch_all(pool)
+    .await
+    .context("loading network scan jobs")
+}
+
+pub async fn active_network_scan_job(pool: &PgPool) -> anyhow::Result<Option<NetworkScanJobRow>> {
+    sqlx::query_as::<_, NetworkScanJobRow>(
+        "SELECT id, status, trigger, settings, summary, error, created_at, started_at, finished_at \
+         FROM network_scan_jobs \
+         WHERE status IN ('queued', 'running') \
+         ORDER BY created_at LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .context("loading active network scan job")
+}
+
+pub async fn latest_completed_network_scan_job(
+    pool: &PgPool,
+) -> anyhow::Result<Option<NetworkScanJobRow>> {
+    sqlx::query_as::<_, NetworkScanJobRow>(
+        "SELECT id, status, trigger, settings, summary, error, created_at, started_at, finished_at \
+         FROM network_scan_jobs \
+         WHERE status = 'succeeded' \
+         ORDER BY finished_at DESC NULLS LAST, created_at DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .context("loading latest completed network scan job")
+}
+
+pub async fn network_scan_devices(
+    pool: &PgPool,
+    job_id: i64,
+) -> anyhow::Result<Vec<NetworkScanDeviceRow>> {
+    sqlx::query_as::<_, NetworkScanDeviceRow>(
+        "SELECT id, job_id, ip, hostname, mac, vendor, status, discovery_method, latency_ms, \
+                ports, os_guess, NULL::timestamptz AS first_seen, last_seen \
+         FROM network_scan_devices \
+         WHERE job_id = $1 ORDER BY ip::inet",
+    )
+    .bind(job_id)
+    .fetch_all(pool)
+    .await
+    .context("loading network scan devices")
+}
+
+pub async fn network_scan_inventory(pool: &PgPool) -> anyhow::Result<Vec<NetworkScanDeviceRow>> {
+    sqlx::query_as::<_, NetworkScanDeviceRow>(
+        "SELECT 0::bigint AS id, last_job_id AS job_id, ip, hostname, mac, vendor, status, \
+                discovery_method, latency_ms, ports, os_guess, first_seen, last_seen \
+         FROM network_scan_inventory ORDER BY ip::inet",
+    )
+    .fetch_all(pool)
+    .await
+    .context("loading network scan inventory")
+}
+
+pub async fn insert_network_scan_devices(
+    pool: &PgPool,
+    job_id: i64,
+    devices: &[NetworkScanDevicePersist],
+) -> anyhow::Result<()> {
+    let mut tx = pool
+        .begin()
+        .await
+        .context("starting network scan transaction")?;
+    sqlx::query("DELETE FROM network_scan_devices WHERE job_id = $1")
+        .bind(job_id)
+        .execute(&mut *tx)
+        .await
+        .context("clearing previous network scan devices")?;
+
+    for d in devices {
+        sqlx::query(
+            "INSERT INTO network_scan_devices \
+             (job_id, ip, hostname, mac, vendor, status, discovery_method, latency_ms, ports, os_guess, raw) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb) \
+             ON CONFLICT (job_id, ip) DO UPDATE SET \
+               hostname = EXCLUDED.hostname, mac = EXCLUDED.mac, vendor = EXCLUDED.vendor, \
+               status = EXCLUDED.status, discovery_method = EXCLUDED.discovery_method, \
+               latency_ms = EXCLUDED.latency_ms, ports = EXCLUDED.ports, \
+               os_guess = EXCLUDED.os_guess, raw = EXCLUDED.raw, last_seen = now()",
+        )
+        .bind(job_id)
+        .bind(&d.ip)
+        .bind(&d.hostname)
+        .bind(&d.mac)
+        .bind(&d.vendor)
+        .bind(&d.status)
+        .bind(&d.discovery_method)
+        .bind(d.latency_ms)
+        .bind(&d.ports)
+        .bind(&d.os_guess)
+        .bind(&d.raw)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| format!("inserting network scan device {}", d.ip))?;
+
+        sqlx::query(
+            "INSERT INTO network_scan_inventory \
+             (ip, hostname, mac, vendor, status, discovery_method, latency_ms, ports, os_guess, last_job_id) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10) \
+             ON CONFLICT (ip) DO UPDATE SET \
+               hostname = COALESCE(EXCLUDED.hostname, network_scan_inventory.hostname), \
+               mac = COALESCE(EXCLUDED.mac, network_scan_inventory.mac), \
+               vendor = COALESCE(EXCLUDED.vendor, network_scan_inventory.vendor), \
+               status = EXCLUDED.status, discovery_method = EXCLUDED.discovery_method, \
+               latency_ms = EXCLUDED.latency_ms, ports = EXCLUDED.ports, \
+               os_guess = COALESCE(EXCLUDED.os_guess, network_scan_inventory.os_guess), \
+               last_seen = now(), last_job_id = EXCLUDED.last_job_id, updated_at = now()",
+        )
+        .bind(&d.ip)
+        .bind(&d.hostname)
+        .bind(&d.mac)
+        .bind(&d.vendor)
+        .bind(&d.status)
+        .bind(&d.discovery_method)
+        .bind(d.latency_ms)
+        .bind(&d.ports)
+        .bind(&d.os_guess)
+        .bind(job_id)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| format!("upserting network scan inventory {}", d.ip))?;
+    }
+
+    tx.commit()
+        .await
+        .context("committing network scan device transaction")?;
+    Ok(())
+}
+
+pub async fn network_scan_schedule_due(
+    pool: &PgPool,
+    interval_minutes: u64,
+    run_at_start: bool,
+) -> anyhow::Result<bool> {
+    let active_or_recent = sqlx::query(
+        "SELECT EXISTS ( \
+           SELECT 1 FROM network_scan_jobs \
+           WHERE status IN ('queued', 'running') \
+              OR created_at > now() - make_interval(mins => $1::int) \
+         ) AS present",
+    )
+    .bind(interval_minutes.min(i32::MAX as u64) as i32)
+    .fetch_one(pool)
+    .await
+    .context("checking recent network scan jobs")?
+    .get::<bool, _>("present");
+
+    if active_or_recent {
+        return Ok(false);
+    }
+    if run_at_start {
+        return Ok(true);
+    }
+
+    let any_job = sqlx::query("SELECT EXISTS (SELECT 1 FROM network_scan_jobs) AS present")
+        .fetch_one(pool)
+        .await
+        .context("checking for network scan history")?
+        .get::<bool, _>("present");
+    Ok(any_job)
+}
+
+pub async fn prune_network_scan_history(pool: &PgPool, retention_days: i64) -> anyhow::Result<()> {
+    let days = retention_days.clamp(1, i32::MAX as i64) as i32;
+    sqlx::query(
+        "DELETE FROM network_scan_jobs \
+         WHERE created_at < now() - make_interval(days => $1::int) \
+           AND status NOT IN ('queued', 'running')",
+    )
+    .bind(days)
+    .execute(pool)
+    .await
+    .context("pruning network scan job history")?;
+    Ok(())
 }
 
 // ── Users & sessions ────────────────────────────────────────────────────────

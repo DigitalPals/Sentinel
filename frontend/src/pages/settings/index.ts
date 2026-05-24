@@ -4,6 +4,7 @@
 
 export type SectionId =
   | "sources"
+  | "network-scanner"
   | "alerts"
   | "notifications"
   | "polling"
@@ -11,6 +12,7 @@ export type SectionId =
 
 export const SECTION_IDS: SectionId[] = [
   "sources",
+  "network-scanner",
   "alerts",
   "notifications",
   "polling",
@@ -21,6 +23,7 @@ export const DEFAULT_SECTION: SectionId = "sources";
 
 export const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "sources", label: "Sources" },
+  { id: "network-scanner", label: "Network Scanner" },
   { id: "alerts", label: "Alerts" },
   { id: "notifications", label: "Notifications" },
   { id: "polling", label: "Polling" },
@@ -29,6 +32,7 @@ export const SECTIONS: { id: SectionId; label: string }[] = [
 
 export const SECTION_CRUMB: Record<SectionId, string> = {
   sources: "Sources",
+  "network-scanner": "Network Scanner",
   alerts: "Alerts",
   notifications: "Notifications",
   polling: "Polling",

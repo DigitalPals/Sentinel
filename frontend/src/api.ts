@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppSettings,
   AuthStatus,
+  NetworkScannerOverview,
+  NetworkScannerSettings,
   PushStatus,
   Snapshot,
   SnapshotState,
@@ -24,6 +26,17 @@ export type {
   NodeGuests,
   NodeTile,
   NotificationSettings,
+  NetworkDiscoverySettings,
+  NetworkPortScanSettings,
+  NetworkScanDevice,
+  NetworkScanJob,
+  NetworkScanPort,
+  NetworkScanSchedule,
+  NetworkScanSummary,
+  NetworkScannerOverview,
+  NetworkScannerSettings,
+  PortProfile,
+  PortScanTechnique,
   PushStatus,
   PortOut,
   ProxmoxSource,
@@ -37,6 +50,7 @@ export type {
   TestResult,
   TopoCounts,
   TopoNode,
+  DiscoveryMethod,
   UiPrefs,
   UniDevice,
   UnraidContainer,
@@ -246,6 +260,31 @@ export async function testSource(body: Record<string, unknown>): Promise<TestRes
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  );
+}
+
+// ── Network scanner ────────────────────────────────────────────────────────
+
+export async function getNetworkScanner(): Promise<NetworkScannerOverview> {
+  return jsonOrThrow(await apiFetch("/api/network-scanner"));
+}
+
+export async function startNetworkScan(
+  settings?: NetworkScannerSettings,
+  force = false,
+): Promise<{ id: number }> {
+  return jsonOrThrow(
+    await apiFetch("/api/network-scanner/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ settings, force }),
+    }),
+  );
+}
+
+export async function cancelNetworkScan(id: number): Promise<void> {
+  await jsonOrThrow(
+    await apiFetch(`/api/network-scanner/jobs/${id}/cancel`, { method: "POST" }),
   );
 }
 

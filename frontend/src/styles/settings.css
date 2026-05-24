@@ -256,6 +256,17 @@
 .src-form-foot { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .src-form-foot .set-actions { margin-left: auto; }
 
+.network-settings {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.network-settings .set-actions {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
 .notify-settings {
   padding: 16px 18px;
   display: flex;

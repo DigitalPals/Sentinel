@@ -15,6 +15,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::db;
+use crate::network_scanner::NetworkScannerSettings;
 use crate::notify::NotificationSettings;
 
 /// Connection details for a UniFi Network controller.
@@ -126,6 +127,7 @@ pub struct RuntimeConfig {
     pub thresholds: AlertThresholds,
     pub ui_prefs: UiPrefs,
     pub notifications: NotificationSettings,
+    pub network_scanner: NetworkScannerSettings,
     pub unifi: Option<UnifiConfig>,
     pub proxmox: Vec<ProxmoxConfig>,
     pub unraid: Vec<UnraidConfig>,
@@ -177,6 +179,11 @@ impl RuntimeConfig {
             thresholds: setting(&map, "alert_thresholds", AlertThresholds::default()),
             ui_prefs: setting(&map, "ui_prefs", UiPrefs::default()),
             notifications: setting(&map, "notifications", NotificationSettings::default()),
+            network_scanner: setting(
+                &map,
+                crate::network_scanner::SETTINGS_KEY,
+                NetworkScannerSettings::default(),
+            ),
             unifi,
             proxmox,
             unraid,

@@ -67,6 +67,7 @@ said that number out loud over HTTP.
 |------|---------------|
 | **Dashboard** | The "everything is fine (citation needed)" page — availability, alerts, live WAN throughput, 24h bandwidth, per-node Proxmox tiles, top resource consumers and a topology snapshot. |
 | **UniFi Network** | Every adopted device with live clients, throughput, uptime, and a per-device detail panel — port grids for switches, radios for APs. |
+| **Network Scanner** | Fast Nmap-backed subnet discovery, MAC/vendor inventory and optional port/service scans. |
 | **Proxmox** | Every node with live CPU/MEM/DISK/NET, and every VM / LXC guest grouped under its node with utilization bars. |
 | **Unraid** | Array and pool health, disks, Docker containers, VMs, parity status and warning/alert notifications from the Unraid GraphQL API. |
 | **Alerts** | Whatever crossed a threshold, with acknowledge / resolve so future-you stops seeing the same red dot. |
@@ -89,6 +90,11 @@ The `app` image is a multi-stage build that compiles the Rust backend, builds
 the Vite/React bundle with Bun, and ships a slim runtime image that serves both
 on port 8787. The TimescaleDB volume persists across rebuilds, so your data
 sticks around.
+
+The `scanner` service uses the same image in `network-scanner-worker` mode with
+host networking and `NET_RAW` / `NET_ADMIN` capabilities. That keeps the web app
+container unprivileged while still letting Nmap perform fast ARP discovery on
+the LAN.
 
 ```bash
 docker compose logs -f app    # tail logs

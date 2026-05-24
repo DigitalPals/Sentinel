@@ -13,6 +13,7 @@ mod engine;
 mod history;
 mod importer;
 mod model;
+mod network_scanner;
 mod notify;
 mod proxmox;
 mod routes;
@@ -38,10 +39,15 @@ async fn main() -> anyhow::Result<()> {
     db::migrate(&pool).await?;
     db::setup_timescale(&pool).await;
 
-    // One-time migration helper: `cybex-sentinel import-config` imports the
-    // legacy config.toml + data/history.json into the database, then exits.
-    if std::env::args().nth(1).as_deref() == Some("import-config") {
-        return importer::run(&pool).await;
+    // One-time helpers / sidecar modes.
+    match std::env::args().nth(1).as_deref() {
+        Some("import-config") => {
+            return importer::run(&pool).await;
+        }
+        Some("network-scanner-worker") => {
+            return network_scanner::run_worker(pool).await;
+        }
+        _ => {}
     }
 
     // Best-effort housekeeping: drop login sessions that have already expired.
@@ -86,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Background poller: refreshes the snapshot on the configured interval.
     tokio::spawn(engine::run_poller(state.clone()));
+    tokio::spawn(network_scanner::run_scheduler(state.clone()));
 
     let app = routes::router(state);
     let addr: std::net::SocketAddr = bind

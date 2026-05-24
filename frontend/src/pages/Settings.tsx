@@ -10,6 +10,7 @@ import SettingsNav from "./settings/SettingsNav";
 import SourcesSection from "./settings/SourcesSection";
 import AlertsSection from "./settings/AlertsSection";
 import NotificationsSection from "./settings/NotificationsSection";
+import NetworkScannerSection from "./settings/NetworkScannerSection";
 import PollingSection from "./settings/PollingSection";
 import DisplaySection from "./settings/DisplaySection";
 
@@ -28,6 +29,9 @@ export default function Settings({
 }) {
   let body;
   switch (section) {
+    case "network-scanner":
+      body = <NetworkScannerSection />;
+      break;
     case "alerts":
       body = <AlertsSection />;
       break;

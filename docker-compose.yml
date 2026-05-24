@@ -27,6 +27,7 @@ services:
     restart: unless-stopped
 
   app:
+    image: cybex-sentinel:local
     build:
       context: .
       dockerfile: Dockerfile
@@ -38,6 +39,25 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
+
+  scanner:
+    image: cybex-sentinel:local
+    command: ["network-scanner-worker"]
+    environment:
+      # The scanner uses host networking so ARP/Nmap see the LAN. The database
+      # is published on the host loopback above, so it connects through 127.0.0.1.
+      DATABASE_URL: postgres://sentinel:sentinel@127.0.0.1:5432/sentinel
+      RUST_LOG: cybex_sentinel=info,tower_http=warn
+    network_mode: host
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
