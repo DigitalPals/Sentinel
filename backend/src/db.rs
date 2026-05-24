@@ -671,6 +671,67 @@ pub async fn save_alert_state(pool: &PgPool, rows: &[AlertStateRow]) -> anyhow::
     Ok(())
 }
 
+// ── Browser push subscriptions ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, FromRow)]
+pub struct PushSubscriptionRow {
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+}
+
+pub async fn get_push_subscriptions(pool: &PgPool) -> anyhow::Result<Vec<PushSubscriptionRow>> {
+    sqlx::query_as::<_, PushSubscriptionRow>(
+        "SELECT endpoint, p256dh, auth FROM push_subscriptions ORDER BY updated_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+    .context("loading browser push subscriptions")
+}
+
+pub async fn count_push_subscriptions(pool: &PgPool) -> anyhow::Result<i64> {
+    let row = sqlx::query("SELECT count(*) AS n FROM push_subscriptions")
+        .fetch_one(pool)
+        .await
+        .context("counting browser push subscriptions")?;
+    Ok(row.get::<i64, _>("n"))
+}
+
+pub async fn upsert_push_subscription(
+    pool: &PgPool,
+    endpoint: &str,
+    p256dh: &str,
+    auth: &str,
+    user_agent: Option<&str>,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_agent) \
+         VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (endpoint) DO UPDATE SET \
+             p256dh = EXCLUDED.p256dh, \
+             auth = EXCLUDED.auth, \
+             user_agent = EXCLUDED.user_agent, \
+             updated_at = now()",
+    )
+    .bind(endpoint)
+    .bind(p256dh)
+    .bind(auth)
+    .bind(user_agent)
+    .execute(pool)
+    .await
+    .context("saving browser push subscription")?;
+    Ok(())
+}
+
+pub async fn delete_push_subscription(pool: &PgPool, endpoint: &str) -> anyhow::Result<bool> {
+    let res = sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = $1")
+        .bind(endpoint)
+        .execute(pool)
+        .await
+        .context("deleting browser push subscription")?;
+    Ok(res.rows_affected() > 0)
+}
+
 /// Hide the password component of a connection string for logging.
 fn redact(url: &str) -> String {
     match (url.find("://"), url.find('@')) {

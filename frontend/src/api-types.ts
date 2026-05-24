@@ -250,6 +250,9 @@ export interface UnraidServer {
   arrayUsed: string;
   arrayTotal: string;
   arrayUsedPct: number;
+  storageUsed: string;
+  storageTotal: string;
+  storageUsedPct: number;
   diskCount: number;
   parityStatus: string;
   parityProgress: number;
@@ -366,11 +369,26 @@ export interface TelegramNotificationSettings {
   chatId: string;
 }
 
+export interface PushNotificationSettings {
+  enabled: boolean;
+  configured: boolean;
+  publicKey: string | null;
+  vapidSubject: string;
+}
+
 export interface NotificationSettings {
   minSeverity: string;
   email: EmailNotificationSettings;
   slack: SlackNotificationSettings;
   telegram: TelegramNotificationSettings;
+  push: PushNotificationSettings;
+}
+
+export interface PushStatus {
+  enabled: boolean;
+  configured: boolean;
+  publicKey: string;
+  subscriptionCount: number;
 }
 
 export interface AppSettings {

@@ -1,15 +1,22 @@
-//! Outbound alert notifications: SMTP email, Slack incoming webhooks and
-//! Telegram Bot API messages.
+//! Outbound alert notifications: SMTP email, Slack incoming webhooks, Telegram
+//! Bot API messages and browser Web Push.
 
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context};
+use atomic_web_push::{
+    engine::general_purpose::URL_SAFE_NO_PAD, ContentEncoding, ReqwestWebPushClient,
+    SubscriptionInfo, Urgency, VapidKeyGenerator, VapidSignatureBuilder, WebPushClient,
+    WebPushMessageBuilder,
+};
 use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::PgPool;
 
+use crate::db;
 use crate::model::Alert;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +26,7 @@ pub struct NotificationSettings {
     pub email: EmailNotificationSettings,
     pub slack: SlackNotificationSettings,
     pub telegram: TelegramNotificationSettings,
+    pub push: PushNotificationSettings,
 }
 
 impl Default for NotificationSettings {
@@ -28,6 +36,7 @@ impl Default for NotificationSettings {
             email: EmailNotificationSettings::default(),
             slack: SlackNotificationSettings::default(),
             telegram: TelegramNotificationSettings::default(),
+            push: PushNotificationSettings::default(),
         }
     }
 }
@@ -55,6 +64,12 @@ impl NotificationSettings {
                 has_bot_token: !self.telegram.bot_token.is_empty(),
                 chat_id: self.telegram.chat_id.clone(),
             },
+            push: PushNotificationPublic {
+                enabled: self.push.enabled,
+                configured: !self.push.vapid_private_key.is_empty(),
+                public_key: push_public_key(&self.push).ok(),
+                vapid_subject: self.push.vapid_subject.clone(),
+            },
         }
     }
 
@@ -70,6 +85,9 @@ impl NotificationSettings {
         }
         if let Some(v) = update.telegram {
             self.telegram.apply_update(v);
+        }
+        if let Some(v) = update.push {
+            self.push.apply_update(v);
         }
     }
 }
@@ -175,6 +193,40 @@ impl TelegramNotificationSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PushNotificationSettings {
+    pub enabled: bool,
+    pub vapid_subject: String,
+    pub vapid_private_key: String,
+}
+
+impl Default for PushNotificationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            vapid_subject: "mailto:admin@localhost".to_string(),
+            vapid_private_key: String::new(),
+        }
+    }
+}
+
+impl PushNotificationSettings {
+    fn apply_update(&mut self, update: PushNotificationUpdate) {
+        if let Some(v) = update.enabled {
+            self.enabled = v;
+        }
+        if let Some(v) = update.vapid_subject {
+            let v = v.trim();
+            self.vapid_subject = if v.is_empty() {
+                PushNotificationSettings::default().vapid_subject
+            } else {
+                v.to_string()
+            };
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationSettingsPublic {
@@ -182,6 +234,7 @@ pub struct NotificationSettingsPublic {
     pub email: EmailNotificationPublic,
     pub slack: SlackNotificationPublic,
     pub telegram: TelegramNotificationPublic,
+    pub push: PushNotificationPublic,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -212,6 +265,15 @@ pub struct TelegramNotificationPublic {
     pub chat_id: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushNotificationPublic {
+    pub enabled: bool,
+    pub configured: bool,
+    pub public_key: Option<String>,
+    pub vapid_subject: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct NotificationSettingsUpdate {
@@ -219,6 +281,7 @@ pub struct NotificationSettingsUpdate {
     pub email: Option<EmailNotificationUpdate>,
     pub slack: Option<SlackNotificationUpdate>,
     pub telegram: Option<TelegramNotificationUpdate>,
+    pub push: Option<PushNotificationUpdate>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -249,15 +312,41 @@ pub struct TelegramNotificationUpdate {
     pub chat_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PushNotificationUpdate {
+    pub enabled: Option<bool>,
+    pub vapid_subject: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NotificationChannel {
     Email,
     Slack,
     Telegram,
+    Push,
+}
+
+pub fn ensure_push_vapid(settings: &mut NotificationSettings) -> anyhow::Result<()> {
+    if settings.push.vapid_private_key.trim().is_empty() {
+        let key = VapidKeyGenerator::new().context("generating browser push VAPID key")?;
+        settings.push.vapid_private_key = key.secret_key_base64();
+    }
+    Ok(())
+}
+
+pub fn push_public_key(settings: &PushNotificationSettings) -> anyhow::Result<String> {
+    if settings.vapid_private_key.trim().is_empty() {
+        bail!("browser push VAPID key is not configured");
+    }
+    let key = VapidKeyGenerator::from_base64(&settings.vapid_private_key)
+        .context("loading browser push VAPID key")?;
+    Ok(key.public_key_base64())
 }
 
 pub async fn send_alert_notifications(
+    pool: &PgPool,
     settings: &NotificationSettings,
     alerts: &[Alert],
 ) -> anyhow::Result<()> {
@@ -286,6 +375,11 @@ pub async fn send_alert_notifications(
             errors.push(format!("Telegram: {e:#}"));
         }
     }
+    if settings.push.enabled {
+        if let Err(e) = send_push(pool, &settings.push, &selected).await {
+            errors.push(format!("browser push: {e:#}"));
+        }
+    }
 
     if errors.is_empty() {
         Ok(())
@@ -295,6 +389,7 @@ pub async fn send_alert_notifications(
 }
 
 pub async fn send_test_notification(
+    pool: &PgPool,
     settings: &NotificationSettings,
     channel: &NotificationChannel,
 ) -> anyhow::Result<()> {
@@ -317,6 +412,7 @@ pub async fn send_test_notification(
         NotificationChannel::Email => send_email(&settings.email, &alerts).await,
         NotificationChannel::Slack => send_slack(&settings.slack, &alerts).await,
         NotificationChannel::Telegram => send_telegram(&settings.telegram, &alerts).await,
+        NotificationChannel::Push => send_push(pool, &settings.push, &alerts).await,
     }
 }
 
@@ -417,6 +513,47 @@ async fn send_telegram(
     Ok(())
 }
 
+async fn send_push(
+    pool: &PgPool,
+    settings: &PushNotificationSettings,
+    alerts: &[Alert],
+) -> anyhow::Result<()> {
+    if settings.vapid_private_key.trim().is_empty() {
+        bail!("browser push VAPID key is not configured");
+    }
+    let subscriptions = db::get_push_subscriptions(pool).await?;
+    if subscriptions.is_empty() {
+        bail!("no browser push subscriptions are registered");
+    }
+
+    let payload = format_push_payload(alerts);
+    let client = ReqwestWebPushClient::new();
+    let mut errors = Vec::new();
+    for sub in subscriptions {
+        let info = SubscriptionInfo::new(sub.endpoint, sub.p256dh, sub.auth);
+        let mut sig_builder =
+            VapidSignatureBuilder::from_base64(&settings.vapid_private_key, URL_SAFE_NO_PAD, &info)
+                .context("building browser push VAPID signature")?;
+        if !settings.vapid_subject.trim().is_empty() {
+            sig_builder.add_claim("sub", settings.vapid_subject.clone());
+        }
+        let mut builder = WebPushMessageBuilder::new(&info);
+        builder.set_payload(ContentEncoding::Aes128Gcm, payload.as_bytes());
+        builder.set_vapid_signature(sig_builder.build()?);
+        builder.set_ttl(3600);
+        builder.set_urgency(Urgency::High);
+        if let Err(e) = client.send(builder.build()?).await {
+            errors.push(format!("{e:#}"));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        bail!(errors.join("; "))
+    }
+}
+
 fn parse_mailbox(value: &str) -> anyhow::Result<Mailbox> {
     value.parse().map_err(|e| anyhow!("{e}"))
 }
@@ -468,6 +605,25 @@ fn format_slack(alerts: &[Alert]) -> String {
         ));
     }
     out
+}
+
+fn format_push_payload(alerts: &[Alert]) -> String {
+    let body = match alerts {
+        [a] => format!("{} / {} / {}", a.source, a.host, a.target),
+        _ => format!("{} alerts need attention", alerts.len()),
+    };
+    json!({
+        "title": notification_subject(alerts),
+        "body": body,
+        "url": "/alerts",
+        "tag": "sentinel-alerts",
+        "icon": "/pwa-icon.svg",
+        "badge": "/pwa-icon.svg",
+        "data": {
+            "url": "/alerts",
+        }
+    })
+    .to_string()
 }
 
 fn normalize_min_severity(value: &str) -> String {

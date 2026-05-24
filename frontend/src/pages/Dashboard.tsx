@@ -162,7 +162,7 @@ export default function Dashboard({ snap }: { snap: Snapshot }) {
 
       <Card
         title="Unraid Storage"
-        sub={`live · ${unraid.servers.length} server(s) · array / docker / vm`}
+        sub={`live · ${unraid.servers.length} server(s) · array + pools / docker / vm`}
         actions={
           <>
             <Chip tone={unraid.arrayWarn ? "warn" : "ok"} dot>
@@ -203,12 +203,12 @@ export default function Dashboard({ snap }: { snap: Snapshot }) {
                 </div>
                 <div className="node-tile-meta">
                   <span>
-                    Array {s.arrayUsed} / {s.arrayTotal}
+                    Storage {s.storageUsed} / {s.storageTotal}
                   </span>
                   <span>{s.temp}</span>
                 </div>
                 <div className="node-tile-bars">
-                  <Bar label="ARRAY" value={s.arrayUsedPct} />
+                  <Bar label="STORAGE" value={s.storageUsedPct} />
                   <Bar label="CPU" value={s.cpu} />
                   <Bar label="MEM" value={s.mem} />
                 </div>

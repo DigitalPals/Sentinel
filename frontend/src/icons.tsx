@@ -127,6 +127,11 @@ const ICONS: Record<string, React.ReactElement> = {
       <circle cx="12" cy="8" r="1.2" />
     </svg>
   ),
+  menu: (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M3 4h10M3 8h10M3 12h10" strokeLinecap="round" />
+    </svg>
+  ),
   power: (
     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.6">
       <path d="M8 2v5" strokeLinecap="round" />

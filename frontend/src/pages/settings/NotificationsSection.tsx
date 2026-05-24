@@ -1,12 +1,27 @@
 // Notifications — outbound channels for alert delivery.
 import React from "react";
-import { AppSettings, getSettings, putSettings, testNotification } from "../../api";
+import {
+  deletePushSubscription,
+  getPushStatus,
+  getSettings,
+  putSettings,
+  savePushSubscription,
+  testNotification,
+} from "../../api";
+import type { AppSettings, PushStatus } from "../../api";
 import { Card } from "../../components";
+import {
+  getPushDeviceState,
+  subscribeBrowserPush,
+  unsubscribeBrowserPush,
+} from "../../pwa";
+import type { PushDeviceState } from "../../pwa";
 import { Field, Msg, Tone, Toggle } from "./shared";
 
-type Channel = "email" | "slack" | "telegram";
+type Channel = "email" | "slack" | "telegram" | "push";
+type HelpChannel = Exclude<Channel, "push">;
 
-const HELP: Record<Channel, { title: string; steps: string[] }> = {
+const HELP: Record<HelpChannel, { title: string; steps: string[] }> = {
   email: {
     title: "Email setup",
     steps: [
@@ -60,6 +75,9 @@ type Draft = {
     botToken: string;
     chatId: string;
   };
+  push: {
+    enabled: boolean;
+  };
 };
 
 export default function NotificationsSection() {
@@ -97,6 +115,9 @@ function NotificationsCard({
 }) {
   const [draft, setDraft] = React.useState<Draft>(() => draftFromSettings(app));
   const [busy, setBusy] = React.useState<"save" | Channel | null>(null);
+  const [pushStatus, setPushStatus] = React.useState<PushStatus | null>(null);
+  const [pushDevice, setPushDevice] = React.useState<PushDeviceState>("unsupported");
+  const [pushBusy, setPushBusy] = React.useState(false);
 
   React.useEffect(() => {
     setDraft(draftFromSettings(app));
@@ -108,12 +129,30 @@ function NotificationsCard({
     setDraft((d) => ({ ...d, slack: { ...d.slack, [key]: value } }));
   const setTelegram = <K extends keyof Draft["telegram"]>(key: K, value: Draft["telegram"][K]) =>
     setDraft((d) => ({ ...d, telegram: { ...d.telegram, [key]: value } }));
+  const setPushDraft = <K extends keyof Draft["push"]>(key: K, value: Draft["push"][K]) =>
+    setDraft((d) => ({ ...d, push: { ...d.push, [key]: value } }));
+
+  const refreshPush = React.useCallback(async () => {
+    try {
+      const [status, device] = await Promise.all([getPushStatus(), getPushDeviceState()]);
+      setPushStatus(status);
+      setPushDevice(device);
+    } catch {
+      setPushStatus(null);
+      setPushDevice(await getPushDeviceState().catch(() => "unsupported"));
+    }
+  }, []);
+
+  React.useEffect(() => {
+    refreshPush();
+  }, [refreshPush]);
 
   const save = async () => {
     setBusy("save");
     try {
       const saved = await putSettings({ notifications: buildUpdate(draft) });
       onSaved(saved);
+      await refreshPush();
       onMsg("ok", "Notification settings saved.");
     } catch (e: any) {
       onMsg("err", String(e?.message ?? e));
@@ -133,6 +172,38 @@ function NotificationsCard({
       setBusy(null);
     }
   };
+
+  const enableDevicePush = async () => {
+    setPushBusy(true);
+    try {
+      const status = pushStatus ?? (await getPushStatus());
+      const subscription = await subscribeBrowserPush(status.publicKey);
+      await savePushSubscription(subscription);
+      await refreshPush();
+      onMsg("ok", "Browser push enabled for this device.");
+    } catch (e: any) {
+      onMsg("err", String(e?.message ?? e));
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const disableDevicePush = async () => {
+    setPushBusy(true);
+    try {
+      const endpoint = await unsubscribeBrowserPush();
+      if (endpoint) await deletePushSubscription(endpoint);
+      await refreshPush();
+      onMsg("ok", "Browser push disabled for this device.");
+    } catch (e: any) {
+      onMsg("err", String(e?.message ?? e));
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const deviceSubscribed = pushDevice === "subscribed";
+  const pushUnavailable = pushDevice === "unsupported" || pushDevice === "blocked";
 
   return (
     <Card
@@ -308,6 +379,42 @@ function NotificationsCard({
           </div>
         </div>
 
+        <div className="notify-channel">
+          <div className="notify-channel-hd">
+            <div className="notify-channel-main">
+              <label className="set-inline">
+                <Toggle on={draft.push.enabled} onChange={(v) => setPushDraft("enabled", v)} />
+                <span className="notify-channel-title">Browser push</span>
+              </label>
+            </div>
+            <button
+              className="set-btn"
+              disabled={busy != null || pushBusy || (pushStatus?.subscriptionCount ?? 0) === 0}
+              onClick={() => runTest("push")}
+            >
+              Test push
+            </button>
+          </div>
+          <div className="push-device-row">
+            <div className="push-device-main">
+              <span className="push-device-label">This device</span>
+              <span className={"push-device-state " + pushDevice}>{pushDeviceLabel(pushDevice)}</span>
+              {pushStatus && (
+                <span className="push-device-count">
+                  {pushStatus.subscriptionCount} registered
+                </span>
+              )}
+            </div>
+            <button
+              className={"set-btn" + (deviceSubscribed ? " danger" : " primary")}
+              disabled={busy != null || pushBusy || (!deviceSubscribed && pushUnavailable)}
+              onClick={deviceSubscribed ? disableDevicePush : enableDevicePush}
+            >
+              {deviceSubscribed ? "Disable device" : "Enable device"}
+            </button>
+          </div>
+        </div>
+
         <div className="set-actions">
           <span className="set-note">{busy && busy !== "save" ? `Sending ${busy} test...` : ""}</span>
           <button className="set-btn primary" disabled={busy != null} onClick={save}>
@@ -319,7 +426,7 @@ function NotificationsCard({
   );
 }
 
-function ProviderHelp({ channel }: { channel: Channel }) {
+function ProviderHelp({ channel }: { channel: HelpChannel }) {
   const help = HELP[channel];
   const id = `notify-help-${channel}`;
   return (
@@ -345,6 +452,12 @@ function ProviderHelp({ channel }: { channel: Channel }) {
 }
 
 function draftFromSettings(app: AppSettings): Draft {
+  const push = app.notifications.push ?? {
+    enabled: false,
+    configured: false,
+    publicKey: null,
+    vapidSubject: "mailto:admin@localhost",
+  };
   return {
     minSeverity: app.notifications.minSeverity || "warn",
     email: {
@@ -365,6 +478,9 @@ function draftFromSettings(app: AppSettings): Draft {
       enabled: app.notifications.telegram.enabled,
       botToken: "",
       chatId: app.notifications.telegram.chatId,
+    },
+    push: {
+      enabled: push.enabled,
     },
   };
 }
@@ -395,6 +511,9 @@ function buildUpdate(draft: Draft): Record<string, unknown> {
     email,
     slack,
     telegram,
+    push: {
+      enabled: draft.push.enabled,
+    },
   };
 }
 
@@ -403,4 +522,17 @@ function splitRecipients(value: string): string[] {
     .split(/[\n,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function pushDeviceLabel(state: PushDeviceState): string {
+  switch (state) {
+    case "subscribed":
+      return "Subscribed";
+    case "blocked":
+      return "Blocked";
+    case "idle":
+      return "Not subscribed";
+    default:
+      return "Unavailable";
+  }
 }

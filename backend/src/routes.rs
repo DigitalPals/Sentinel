@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     middleware,
     response::{Html, IntoResponse, Response},
     routing::{get, post, put},
@@ -47,6 +47,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/alerts/action", post(alert_action))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/notifications/test", post(test_notification))
+        .route("/api/push/status", get(push_status))
+        .route(
+            "/api/push/subscriptions",
+            post(save_push_subscription).delete(delete_push_subscription),
+        )
         .route("/api/sources", get(get_sources))
         .route("/api/sources/test", post(test_source))
         .route("/api/sources/unifi", post(create_unifi))
@@ -251,6 +256,10 @@ async fn put_settings(
     if let Some(v) = req.notifications {
         let mut notifications = state.config().notifications.clone();
         notifications.apply_update(v);
+        if notifications.push.enabled {
+            notify::ensure_push_vapid(&mut notifications)
+                .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
+        }
         let value = serde_json::to_value(notifications).map_err(|e| anyhow::anyhow!(e))?;
         db::set_setting(pool, "notifications", &value).await?;
     }
@@ -275,12 +284,110 @@ async fn test_notification(
     if let Some(update) = req.notifications {
         notifications.apply_update(update);
     }
-    notify::send_test_notification(&notifications, &req.channel)
+    notify::send_test_notification(&state.pool, &notifications, &req.channel)
         .await
         .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
     Ok(Json(
         json!({ "ok": true, "detail": "Test notification sent." }),
     ))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PushStatusResponse {
+    enabled: bool,
+    configured: bool,
+    public_key: String,
+    subscription_count: i64,
+}
+
+async fn ensure_push_config(
+    state: &AppState,
+) -> Result<notify::NotificationSettingsPublic, ApiError> {
+    let mut notifications = state.config().notifications.clone();
+    if notifications.push.vapid_private_key.trim().is_empty() {
+        notify::ensure_push_vapid(&mut notifications)
+            .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
+        let value = serde_json::to_value(&notifications).map_err(|e| anyhow::anyhow!(e))?;
+        db::set_setting(&state.pool, "notifications", &value).await?;
+        refresh_config(state).await?;
+        notifications = state.config().notifications.clone();
+    }
+    Ok(notifications.public())
+}
+
+async fn push_status(State(state): State<Arc<AppState>>) -> ApiResult<PushStatusResponse> {
+    let public = ensure_push_config(&state).await?;
+    let public_key = public.push.public_key.ok_or_else(|| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid browser push VAPID key".to_string(),
+        )
+    })?;
+    let subscription_count = db::count_push_subscriptions(&state.pool).await?;
+    Ok(Json(PushStatusResponse {
+        enabled: public.push.enabled,
+        configured: public.push.configured,
+        public_key,
+        subscription_count,
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PushSubscriptionIn {
+    endpoint: String,
+    keys: PushSubscriptionKeysIn,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PushSubscriptionKeysIn {
+    p256dh: String,
+    auth: String,
+}
+
+async fn save_push_subscription(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<PushSubscriptionIn>,
+) -> ApiResult<serde_json::Value> {
+    if req.endpoint.trim().is_empty()
+        || req.keys.p256dh.trim().is_empty()
+        || req.keys.auth.trim().is_empty()
+    {
+        return Err(bad_request("invalid browser push subscription"));
+    }
+    let user_agent = headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    db::upsert_push_subscription(
+        &state.pool,
+        req.endpoint.trim(),
+        req.keys.p256dh.trim(),
+        req.keys.auth.trim(),
+        user_agent.as_deref(),
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeletePushSubscriptionReq {
+    endpoint: String,
+}
+
+async fn delete_push_subscription(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<DeletePushSubscriptionReq>,
+) -> ApiResult<serde_json::Value> {
+    if req.endpoint.trim().is_empty() {
+        return Err(bad_request("invalid browser push subscription"));
+    }
+    let deleted = db::delete_push_subscription(&state.pool, req.endpoint.trim()).await?;
+    Ok(Json(json!({ "ok": true, "deleted": deleted })))
 }
 
 // ── Sources ─────────────────────────────────────────────────────────────────

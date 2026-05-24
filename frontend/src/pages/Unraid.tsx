@@ -11,7 +11,7 @@ import type {
 } from "../api";
 import { Bar, Card, Chip, Icon, KpiGrid, MiniBar, StatusDot } from "../components";
 
-const KPI_LABELS = ["Servers Online", "Array Usage", "Docker Containers", "VMs Running"];
+const KPI_LABELS = ["Servers Online", "Storage Usage", "Docker Containers", "VMs Running"];
 
 type ResourceKind = "storage" | "disk" | "docker" | "vm" | "notice";
 type View = "all" | ResourceKind;
@@ -230,7 +230,7 @@ export default function Unraid({ snap }: { snap: Snapshot }) {
                   </div>
                   <Bar label="CPU" value={server.cpu} />
                   <Bar label="MEM" value={server.mem} />
-                  <Bar label="ARRAY" value={server.arrayUsedPct} />
+                  <Bar label="STORAGE" value={server.storageUsedPct} />
                   <div title={server.tempSensor ? `${server.temp} · ${server.tempSensor}` : server.temp}>
                     <Bar label="SENSOR" value={tempValue(server.temp)} unit=" C" max={90} />
                   </div>

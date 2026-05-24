@@ -15,8 +15,8 @@ pub(super) struct UnraidProcessed {
     pub server: UnraidServerOut,
     pub events: Vec<Event>,
     pub candidates: Vec<Candidate>,
-    pub array_used_pct: u32,
-    pub array_used_tb: f64,
+    pub storage_used_pct: u32,
+    pub storage_used_tb: f64,
     pub containers_running: u32,
     pub containers_total: u32,
     pub vms_running: u32,
@@ -30,9 +30,13 @@ pub(super) fn process_unraid(
     th: &AlertThresholds,
 ) -> UnraidProcessed {
     let array_used_pct = pct(data.array.used_kb, data.array.total_kb);
-    let array_used_tb = data.array.used_kb as f64 * 1024.0 / 1_099_511_627_776.0;
     let array_total = fmt_kb(data.array.total_kb);
     let array_used = fmt_kb(data.array.used_kb);
+    let storage_totals = storage_totals_kb(data);
+    let storage_used_pct = pct(storage_totals.used_kb, storage_totals.total_kb);
+    let storage_used_tb = storage_totals.used_kb as f64 * 1024.0 / 1_099_511_627_776.0;
+    let storage_total = fmt_kb(storage_totals.total_kb);
+    let storage_used = fmt_kb(storage_totals.used_kb);
     let containers_running = data
         .containers
         .iter()
@@ -386,6 +390,9 @@ pub(super) fn process_unraid(
         array_used,
         array_total,
         array_used_pct,
+        storage_used,
+        storage_total,
+        storage_used_pct,
         disk_count: disks.len() as u32,
         parity_status: data.array.parity.status.clone(),
         parity_progress: data.array.parity.progress,
@@ -407,8 +414,8 @@ pub(super) fn process_unraid(
         server,
         events,
         candidates: cands,
-        array_used_pct,
-        array_used_tb,
+        storage_used_pct,
+        storage_used_tb,
         containers_running,
         containers_total,
         vms_running,
@@ -427,6 +434,12 @@ struct PoolAgg {
     temp: Option<i32>,
 }
 
+#[derive(Default)]
+struct StorageTotals {
+    used_kb: u64,
+    total_kb: u64,
+}
+
 fn build_storage_rows(data: &UnraidData) -> Vec<UnraidStorageOut> {
     let mut rows = vec![UnraidStorageOut {
         id: "array".to_string(),
@@ -440,6 +453,40 @@ fn build_storage_rows(data: &UnraidData) -> Vec<UnraidStorageOut> {
         temp: hottest_temp(data.array.disks.iter().filter(|d| d.kind == "DATA")),
     }];
 
+    rows.extend(cache_pool_aggs(data).into_iter().map(|(id, p)| {
+        UnraidStorageOut {
+            id,
+            name: p.name,
+            kind: "Pool".to_string(),
+            status: disk_status_label(&p.status).to_string(),
+            used: fmt_kb(p.used_kb),
+            total: fmt_kb(p.total_kb),
+            used_pct: pct(p.used_kb, p.total_kb),
+            members: p.members,
+            temp: p
+                .temp
+                .map(|t| format!("{t} C"))
+                .unwrap_or_else(|| "—".to_string()),
+        }
+    }));
+
+    rows
+}
+
+fn storage_totals_kb(data: &UnraidData) -> StorageTotals {
+    cache_pool_aggs(data).values().fold(
+        StorageTotals {
+            used_kb: data.array.used_kb,
+            total_kb: data.array.total_kb,
+        },
+        |totals, pool| StorageTotals {
+            used_kb: totals.used_kb.saturating_add(pool.used_kb),
+            total_kb: totals.total_kb.saturating_add(pool.total_kb),
+        },
+    )
+}
+
+fn cache_pool_aggs(data: &UnraidData) -> BTreeMap<String, PoolAgg> {
     let cache_names = data
         .array
         .disks
@@ -473,24 +520,7 @@ fn build_storage_rows(data: &UnraidData) -> Vec<UnraidStorageOut> {
         }
     }
 
-    rows.extend(pools.into_iter().map(|(id, p)| {
-        UnraidStorageOut {
-            id,
-            name: p.name,
-            kind: "Pool".to_string(),
-            status: disk_status_label(&p.status).to_string(),
-            used: fmt_kb(p.used_kb),
-            total: fmt_kb(p.total_kb),
-            used_pct: pct(p.used_kb, p.total_kb),
-            members: p.members,
-            temp: p
-                .temp
-                .map(|t| format!("{t} C"))
-                .unwrap_or_else(|| "—".to_string()),
-        }
-    }));
-
-    rows
+    pools
 }
 
 fn hottest_temp<'a>(disks: impl Iterator<Item = &'a UnraidDisk>) -> String {
@@ -536,10 +566,7 @@ fn temp_candidate(data: &UnraidData, sev: &str, temp: f64, threshold: u32) -> Ca
         host: data.server_name.clone(),
         target: "temperature".to_string(),
         title: format!("Unraid temperature {temp:.0} C"),
-        desc: format!(
-            "{} {} is {temp:.0} C.",
-            data.server_name, sensor
-        ),
+        desc: format!("{} {} is {temp:.0} C.", data.server_name, sensor),
         rule: format!("metrics.temperature.sensors >= {threshold} C"),
     }
 }
@@ -619,5 +646,45 @@ fn fmt_optional_bytes_precise(bytes: Option<u64>) -> String {
         format!("{} KB", bytes / 1024)
     } else {
         fmt_mem(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::unraid::{UnraidArrayData, UnraidData, UnraidDisk};
+
+    fn disk(name: &str, kind: &str, used_kb: u64, size_kb: u64) -> UnraidDisk {
+        UnraidDisk {
+            id: name.to_string(),
+            name: name.to_string(),
+            kind: kind.to_string(),
+            used_kb,
+            size_kb,
+            ..UnraidDisk::default()
+        }
+    }
+
+    #[test]
+    fn storage_totals_include_array_and_cache_pools() {
+        let data = UnraidData {
+            array: UnraidArrayData {
+                used_kb: 400,
+                total_kb: 1_000,
+                disks: vec![
+                    disk("disk1", "DATA", 400, 1_000),
+                    disk("cache", "CACHE", 200, 500),
+                    disk("cache2", "CACHE", 180, 500),
+                    disk("fast", "CACHE", 50, 200),
+                ],
+                ..UnraidArrayData::default()
+            },
+            ..UnraidData::default()
+        };
+
+        let totals = storage_totals_kb(&data);
+
+        assert_eq!(totals.used_kb, 650);
+        assert_eq!(totals.total_kb, 1_700);
     }
 }

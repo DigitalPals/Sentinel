@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppSettings,
   AuthStatus,
+  PushStatus,
   Snapshot,
   SnapshotState,
   SourcesData,
@@ -23,6 +24,7 @@ export type {
   NodeGuests,
   NodeTile,
   NotificationSettings,
+  PushStatus,
   PortOut,
   ProxmoxSource,
   ProxmoxView,
@@ -143,7 +145,7 @@ export async function putSettings(patch: Record<string, unknown>): Promise<AppSe
 }
 
 export async function testNotification(
-  channel: "email" | "slack" | "telegram",
+  channel: "email" | "slack" | "telegram" | "push",
   notifications: Record<string, unknown>,
 ): Promise<TestResult> {
   return jsonOrThrow(
@@ -151,6 +153,30 @@ export async function testNotification(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ channel, notifications }),
+    }),
+  );
+}
+
+export async function getPushStatus(): Promise<PushStatus> {
+  return jsonOrThrow(await apiFetch("/api/push/status"));
+}
+
+export async function savePushSubscription(subscription: PushSubscriptionJSON): Promise<void> {
+  await jsonOrThrow(
+    await apiFetch("/api/push/subscriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(subscription),
+    }),
+  );
+}
+
+export async function deletePushSubscription(endpoint: string): Promise<void> {
+  await jsonOrThrow(
+    await apiFetch("/api/push/subscriptions", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint }),
     }),
   );
 }

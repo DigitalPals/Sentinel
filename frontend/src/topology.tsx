@@ -192,11 +192,11 @@ function TreeRow({
 // ── Compact topology card (dashboard) ────────────────────────
 export function TopologyCard({ topo, onOpenFull }: { topo: TopoNode; onOpenFull: () => void }) {
   const counts = countTree(topo);
-  // Collapse every branch except the root so the card stays compact.
+  // Collapse branches below the first two levels so the card stays compact.
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
     const walk = (n: TopoNode, depth: number) => {
-      if ((n.children || []).length && depth > 0) init[n.id] = false;
+      if ((n.children || []).length && depth > 1) init[n.id] = false;
       (n.children || []).forEach((c) => walk(c, depth + 1));
     };
     if (topo && topo.id) walk(topo, 0);

@@ -205,7 +205,9 @@ async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
     *state.snapshot.write().unwrap() = Arc::new(snapshot);
 
     if !notifications.is_empty() {
-        if let Err(e) = notify::send_alert_notifications(&cfg.notifications, &notifications).await {
+        if let Err(e) =
+            notify::send_alert_notifications(&state.pool, &cfg.notifications, &notifications).await
+        {
             tracing::warn!("could not send alert notification(s): {e:#}");
         }
     }
@@ -302,9 +304,9 @@ fn build(
     let mut unraid_containers_total = 0u32;
     let mut unraid_vms_running = 0u32;
     let mut unraid_vms_total = 0u32;
-    let mut unraid_array_used_pct_sum = 0.0;
-    let mut unraid_array_used_tb = 0.0;
-    let mut unraid_array_warn = 0u32;
+    let mut unraid_storage_used_pct_sum = 0.0;
+    let mut unraid_storage_used_tb = 0.0;
+    let mut unraid_storage_warn = 0u32;
     let mut unraid_software_update_count = 0u32;
     for (name, result) in unraid {
         match result {
@@ -322,10 +324,10 @@ fn build(
                 unraid_vms_running += processed.vms_running;
                 unraid_vms_total += processed.vms_total;
                 unraid_software_update_count += processed.software_update_count;
-                unraid_array_used_pct_sum += processed.array_used_pct as f64;
-                unraid_array_used_tb += processed.array_used_tb;
-                if processed.array_used_pct >= config.thresholds.unraid_array_warn {
-                    unraid_array_warn += 1;
+                unraid_storage_used_pct_sum += processed.storage_used_pct as f64;
+                unraid_storage_used_tb += processed.storage_used_tb;
+                if processed.storage_used_pct >= config.thresholds.unraid_array_warn {
+                    unraid_storage_warn += 1;
                 }
                 events.extend(processed.events);
                 cands.extend(processed.candidates);
@@ -347,10 +349,10 @@ fn build(
     }
     let unraid_servers_online = unraid_servers.iter().filter(|s| s.status == "ok").count() as u32;
     let unraid_servers_total = unraid_servers.len() as u32;
-    let unraid_array_used_pct = if unraid_servers_total == 0 {
+    let unraid_storage_used_pct = if unraid_servers_total == 0 {
         0.0
     } else {
-        unraid_array_used_pct_sum / unraid_servers_total as f64
+        unraid_storage_used_pct_sum / unraid_servers_total as f64
     };
 
     // ── Cluster-wide scalars ─────────────────────────────────────────────
@@ -420,8 +422,8 @@ fn build(
         wired_clients: unifi_view.wired_clients as f64,
         poe_ports: unifi_view.poe_active as f64,
         unraid_servers_online: unraid_servers_online as f64,
-        unraid_array_used_pct,
-        unraid_array_used_tb,
+        unraid_array_used_pct: unraid_storage_used_pct,
+        unraid_array_used_tb: unraid_storage_used_tb,
         unraid_containers_running: unraid_containers_running as f64,
         unraid_vms_running: unraid_vms_running as f64,
         events_total: events.len() as f64,
@@ -635,9 +637,9 @@ fn build(
             history.spark(24, |s| s.unraid_servers_online),
         ),
         kpi(
-            format!("{unraid_array_used_pct:.0}"),
+            format!("{unraid_storage_used_pct:.0}"),
             "%",
-            format!("{unraid_array_warn} server(s) above threshold"),
+            format!("{unraid_storage_warn} server(s) above threshold"),
             history.trend(24, |s| s.unraid_array_used_pct),
             history.spark(24, |s| s.unraid_array_used_pct),
         ),
@@ -663,7 +665,7 @@ fn build(
         containers_total: unraid_containers_total,
         vms_running: unraid_vms_running,
         vms_total: unraid_vms_total,
-        array_warn: unraid_array_warn,
+        array_warn: unraid_storage_warn,
         software_update_count: unraid_software_update_count,
     };
 

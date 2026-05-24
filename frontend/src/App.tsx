@@ -166,6 +166,14 @@ function AppBody({
   const [settingsSection, setSettingsSection] =
     React.useState<SectionId>(resolveSettingsSection);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(() => {
+    try {
+      return window.localStorage.getItem("sentinel.sidebarCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
 
   const navigate = React.useCallback((p: string, section?: string) => {
     const target = pathForPage(p, section);
@@ -179,6 +187,35 @@ function AppBody({
       );
     }
     window.scrollTo(0, 0);
+  }, []);
+
+  React.useEffect(() => {
+    document.body.classList.toggle("sidebar-open", sidebarOpen);
+    if (!sidebarOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSidebarOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.classList.remove("sidebar-open");
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [sidebarOpen]);
+
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem("sentinel.sidebarCollapsed", sidebarCollapsed ? "1" : "0");
+    } catch {
+      /* ignore persistence failures */
+    }
+  }, [sidebarCollapsed]);
+
+  const toggleNavigation = React.useCallback(() => {
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      setSidebarOpen(true);
+    } else {
+      setSidebarCollapsed((v) => !v);
+    }
   }, []);
 
   // Path-based routing: react to back/forward, and migrate legacy #hash URLs.
@@ -305,33 +342,58 @@ function AppBody({
   return (
     <>
       {onboardingEl}
-      <div className={"app density-" + settings.density + (settings.showSpark ? "" : " no-spark")}>
-      <Sidebar page={page} onNavigate={navigate} alertCount={alertCount} username={username} />
-      <main className="main">
-        <Topbar
-          crumb={meta.crumb}
-          title={meta.title}
-          sources={snap.sources}
-          pollSec={snap.pollIntervalSec}
-          staleSec={staleSec}
-          alertCount={alertCount}
-          onRefresh={refresh}
-          onSettings={() => setSettingsOpen(true)}
-          onAlerts={() => navigate("alerts")}
-          onLogout={onLogout}
+      <div
+        className={
+          "app density-" +
+          settings.density +
+          (settings.showSpark ? "" : " no-spark") +
+          (sidebarOpen ? " nav-open" : "") +
+          (sidebarCollapsed ? " nav-collapsed" : "")
+        }
+      >
+        <button
+          className="sidebar-scrim"
+          aria-label="Close navigation"
+          onClick={() => setSidebarOpen(false)}
         />
-        {stale && (
-          <div style={{ padding: "16px 28px 0" }}>
-            <div className="conn-banner">
-              ⚠ Live data is stale — last successful update {staleSec}s ago. Reconnecting…
+        <Sidebar
+          page={page}
+          onNavigate={navigate}
+          alertCount={alertCount}
+          username={username}
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+        />
+        <main className="main">
+          <Topbar
+            onMenu={toggleNavigation}
+            crumb={meta.crumb}
+            title={meta.title}
+            sources={snap.sources}
+            pollSec={snap.pollIntervalSec}
+            staleSec={staleSec}
+            alertCount={alertCount}
+            onRefresh={refresh}
+            onSettings={() => setSettingsOpen(true)}
+            onAlerts={() => navigate("alerts")}
+            onLogout={onLogout}
+          />
+          {stale && (
+            <div style={{ padding: "16px 28px 0" }}>
+              <div className="conn-banner">
+                ⚠ Live data is stale — last successful update {staleSec}s ago. Reconnecting…
+              </div>
             </div>
-          </div>
+          )}
+          {pageEl}
+        </main>
+        {settingsOpen && (
+          <SettingsPanel
+            settings={settings}
+            setSetting={setSetting}
+            onClose={() => setSettingsOpen(false)}
+          />
         )}
-        {pageEl}
-      </main>
-      {settingsOpen && (
-        <SettingsPanel settings={settings} setSetting={setSetting} onClose={() => setSettingsOpen(false)} />
-      )}
       </div>
     </>
   );

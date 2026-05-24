@@ -18,11 +18,15 @@ export function Sidebar({
   onNavigate,
   alertCount,
   username,
+  open = false,
+  onClose,
 }: {
   page: string;
   onNavigate: (p: string) => void;
   alertCount: number;
   username: string;
+  open?: boolean;
+  onClose?: () => void;
 }) {
   const items = [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
@@ -34,10 +38,19 @@ export function Sidebar({
     { id: "alerts", label: "Alerts", icon: "alert", badge: alertCount },
     { id: "logs", label: "Events & Logs", icon: "logs" },
   ];
+  const go = (id: string) => {
+    onNavigate(id);
+    onClose?.();
+  };
   return (
-    <aside className="sidebar">
+    <aside
+      className={"sidebar" + (open ? " open" : "")}
+      id="app-sidebar"
+      aria-label="Primary navigation"
+    >
       <div className="brand">
         <img src={logoUrl} alt="Cybex Sentinel" className="brand-logo" />
+        <span className="brand-mark" aria-hidden="true">S</span>
       </div>
 
       <div className="nav-label">Monitoring</div>
@@ -45,12 +58,13 @@ export function Sidebar({
         <button
           key={it.id}
           className={"nav-item" + (page === it.id ? " active" : "")}
-          onClick={() => onNavigate(it.id)}
+          onClick={() => go(it.id)}
+          title={it.label}
         >
           <span className="nav-icon">
             <Icon name={it.icon} />
           </span>
-          {it.label}
+          <span className="nav-text">{it.label}</span>
         </button>
       ))}
 
@@ -59,28 +73,30 @@ export function Sidebar({
         <button
           key={it.id}
           className={"nav-item" + (page === it.id ? " active" : "")}
-          onClick={() => onNavigate(it.id)}
+          onClick={() => go(it.id)}
+          title={it.label}
         >
           <span className="nav-icon">
             <Icon name={it.icon} />
           </span>
-          {it.label}
+          <span className="nav-text">{it.label}</span>
           {it.badge ? <span className="nav-badge">{it.badge}</span> : null}
         </button>
       ))}
       <button
         className={"nav-item" + (page === "settings" ? " active" : "")}
-        onClick={() => onNavigate("settings")}
+        onClick={() => go("settings")}
+        title="Settings"
       >
         <span className="nav-icon">
           <Icon name="settings" />
         </span>
-        Settings
+        <span className="nav-text">Settings</span>
       </button>
 
       <div className="sidebar-footer">
         <div className="avatar">{initial(username) || "?"}</div>
-        <div style={{ minWidth: 0, flex: 1 }}>
+        <div className="sidebar-user" style={{ minWidth: 0, flex: 1 }}>
           <div
             style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis" }}
             title={username}
@@ -95,6 +111,7 @@ export function Sidebar({
 }
 
 export function Topbar({
+  onMenu,
   crumb,
   title,
   sources,
@@ -107,6 +124,7 @@ export function Topbar({
   onLogout,
   actions,
 }: {
+  onMenu?: () => void;
   crumb: string;
   title: string;
   sources: SourceHealth[];
@@ -122,6 +140,16 @@ export function Topbar({
   const stale = staleSec > Math.max(20, pollSec * 3);
   return (
     <header className="topbar">
+      {onMenu && (
+        <button
+          className="icon-btn menu-btn"
+          title="Toggle navigation"
+          aria-controls="app-sidebar"
+          onClick={onMenu}
+        >
+          <Icon name="menu" />
+        </button>
+      )}
       <div>
         <div className="crumb">{crumb}</div>
         <div className="page-title">{title}</div>
