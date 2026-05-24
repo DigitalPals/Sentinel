@@ -643,6 +643,21 @@ button.chip:hover { background: var(--surf-2); color: var(--fg); }
   height: 100%;
   min-height: var(--editable-item-min-h);
 }
+.editable-grid-item > .card:not(.topology-card) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.editable-grid-item > .card:not(.topology-card) > .card-hd {
+  flex-shrink: 0;
+}
+.editable-grid-item > .card:not(.topology-card) > .card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .editable-grid-item.editing {
   outline: 1px dashed color-mix(in oklch, var(--accent) 50%, transparent);
   outline-offset: 3px;
@@ -2051,6 +2066,22 @@ html {
 .modal-body,
 .log-body {
   scrollbar-gutter: stable;
+}
+.editable-grid-item > .card:not(.topology-card) > .card-body,
+.card .scroll-area,
+.card .log-body,
+.card .unraid-resource-list {
+  scrollbar-gutter: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.editable-grid-item > .card:not(.topology-card) > .card-body::-webkit-scrollbar,
+.card .scroll-area::-webkit-scrollbar,
+.card .log-body::-webkit-scrollbar,
+.card .unraid-resource-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 ::-webkit-scrollbar { width: 11px; height: 11px; }
