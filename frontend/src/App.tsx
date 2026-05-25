@@ -455,8 +455,6 @@ function AppBody({
             crumb={meta.crumb}
             title={meta.title}
             sources={snap.sources}
-            pollSec={snap.pollIntervalSec}
-            staleSec={staleSec}
             alertCount={alertCount}
             onRefresh={refresh}
             onSettings={() => setSettingsOpen(true)}

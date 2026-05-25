@@ -278,38 +278,6 @@ body.sidebar-open { overflow: hidden; }
   box-shadow: 0 0 0 2px var(--surf);
 }
 
-.live-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--ok);
-  background: var(--ok-soft);
-  border: 1px solid color-mix(in oklch, var(--ok) 30%, transparent);
-  border-radius: 999px;
-  padding: 3px 10px;
-}
-.live-pill.stale {
-  color: var(--crit);
-  background: var(--crit-soft);
-  border-color: color-mix(in oklch, var(--crit) 30%, transparent);
-}
-.live-dot {
-  width: 6px; height: 6px;
-  background: var(--ok);
-  border-radius: 50%;
-  box-shadow: 0 0 8px var(--ok);
-  animation: pulse 1.6s ease-in-out infinite;
-}
-.live-pill.stale .live-dot { background: var(--crit); box-shadow: 0 0 8px var(--crit); }
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: .5; transform: scale(1.4); }
-}
-
 /* ── Page content ───────────────────────────────────────────── */
 .page {
   padding: 24px 28px 80px;
@@ -446,7 +414,6 @@ body.sidebar-open { overflow: hidden; }
 
 @media (max-width: 620px) {
   .topbar { gap: 8px; }
-  .live-pill { display: none; }
   .icon-btn {
     width: 30px;
     height: 30px;

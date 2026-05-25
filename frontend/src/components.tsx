@@ -119,8 +119,6 @@ export function Topbar({
   crumb,
   title,
   sources,
-  pollSec,
-  staleSec,
   alertCount,
   onRefresh,
   onSettings,
@@ -132,8 +130,6 @@ export function Topbar({
   crumb: string;
   title: string;
   sources: SourceHealth[];
-  pollSec: number;
-  staleSec: number;
   alertCount: number;
   onRefresh: () => void;
   onSettings: () => void;
@@ -141,7 +137,6 @@ export function Topbar({
   onLogout?: () => void;
   actions?: React.ReactNode;
 }) {
-  const stale = staleSec > Math.max(20, pollSec * 3);
   return (
     <header className="topbar">
       {onMenu && (
@@ -175,10 +170,6 @@ export function Topbar({
           </span>
         ))}
       </div>
-      <span className={"live-pill" + (stale ? " stale" : "")}>
-        <span className="live-dot" />
-        {stale ? `Stale · ${staleSec}s` : `Live · ${pollSec}s polling`}
-      </span>
       <button
         className="icon-btn"
         title={alertCount > 0 ? `${alertCount} open alert(s)` : "Alerts"}
