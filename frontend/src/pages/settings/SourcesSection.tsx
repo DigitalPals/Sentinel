@@ -17,7 +17,32 @@ import {
   testSource,
 } from "../../api";
 import { Card } from "../../components";
+import { Icon } from "../../icons";
 import { Field, Msg, Tone, Toggle } from "./shared";
+
+type Kind = "unifi" | "proxmox" | "unraid";
+
+// Keep in sync with simple-icons brand hexes used by <Icon name="…">.
+const BRAND_HEX: Record<Kind, string> = {
+  unraid: "#F15A2C",
+  unifi: "#0559C9",
+  proxmox: "#E57000",
+};
+const LABEL: Record<Kind, string> = {
+  unraid: "Unraid",
+  unifi: "UniFi Network",
+  proxmox: "Proxmox VE",
+};
+const TAGLINE: Record<Kind, string> = {
+  unraid: "NAS & storage",
+  unifi: "Network controller",
+  proxmox: "Virtualisation hosts",
+};
+const ADD_NOUN: Record<Kind, string> = {
+  unraid: "server",
+  unifi: "controller",
+  proxmox: "host",
+};
 
 function SourceForm({
   kind,
@@ -26,7 +51,7 @@ function SourceForm({
   onCancel,
   onMsg,
 }: {
-  kind: "unifi" | "proxmox" | "unraid";
+  kind: Kind;
   source: UnifiSource | ProxmoxSource | UnraidSource | null;
   onDone: () => void;
   onCancel: () => void;
@@ -167,19 +192,20 @@ function SourceForm({
   );
 }
 
-function SourceSection({
+function ServicePanel({
   kind,
   sources,
   onChanged,
   onMsg,
 }: {
-  kind: "unifi" | "proxmox" | "unraid";
+  kind: Kind;
   sources: (UnifiSource | ProxmoxSource | UnraidSource)[];
   onChanged: () => void;
   onMsg: (tone: Tone, text: string) => void;
 }) {
   const [editId, setEditId] = React.useState<number | "new" | null>(null);
-  const label = kind === "proxmox" ? "Proxmox VE" : kind === "unraid" ? "Unraid" : "UniFi Network";
+  const label = LABEL[kind];
+  const addNoun = ADD_NOUN[kind];
 
   const remove = async (id: number, name: string) => {
     if (!window.confirm(`Delete source "${name}"?`)) return;
@@ -199,59 +225,79 @@ function SourceSection({
     onChanged();
   };
 
+  const brandStyle = { ["--brand" as any]: BRAND_HEX[kind] } as React.CSSProperties;
+
   return (
-    <div className="set-section">
-      <div className="set-subhd">
-        <span>{label}</span>
+    <section className={`src-service src-service-${kind}`} style={brandStyle}>
+      <header className="src-service-hd">
+        <span className="src-service-mark">
+          <Icon name={kind} size={22} />
+        </span>
+        <div className="src-service-titles">
+          <div className="src-service-title">{label}</div>
+          <div className="src-service-sub">{TAGLINE[kind]}</div>
+        </div>
+        <span className="src-service-count">{sources.length}</span>
         {editId !== "new" && (
-          <button className="set-btn" onClick={() => setEditId("new")}>
-            + Add {kind === "proxmox" ? "host" : kind === "unraid" ? "server" : "controller"}
+          <button className="set-btn primary src-service-add" onClick={() => setEditId("new")}>
+            <Icon name="plus" size={12} /> Add {addNoun}
           </button>
         )}
-      </div>
+      </header>
 
-      {editId === "new" && (
-        <SourceForm
-          kind={kind}
-          source={null}
-          onDone={done}
-          onCancel={() => setEditId(null)}
-          onMsg={onMsg}
-        />
-      )}
-
-      {sources.length === 0 && editId !== "new" && (
-        <div className="set-note">No {label} sources configured.</div>
-      )}
-
-      {sources.map((s) =>
-        editId === s.id ? (
+      <div className="src-service-body">
+        {editId === "new" && (
           <SourceForm
-            key={s.id}
             kind={kind}
-            source={s}
+            source={null}
             onDone={done}
             onCancel={() => setEditId(null)}
             onMsg={onMsg}
           />
-        ) : (
-          <div className="src-item" key={s.id}>
-            <span className={"status-dot " + (s.enabled ? "ok" : "")} />
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div className="src-name">{s.name}</div>
-              <div className="src-host">{s.host}</div>
-            </div>
-            {!s.enabled && <span className="set-note">disabled</span>}
-            <button className="set-btn" onClick={() => setEditId(s.id)}>
-              Edit
-            </button>
-            <button className="set-btn danger" onClick={() => remove(s.id, s.name)}>
-              Delete
-            </button>
+        )}
+
+        {sources.length === 0 && editId !== "new" && (
+          <div className="src-empty">
+            <span className="src-empty-mark">
+              <Icon name={kind} size={28} />
+            </span>
+            <div className="src-empty-text">No {label} sources yet</div>
+            <div className="src-empty-hint">Add a {addNoun} to start polling.</div>
           </div>
-        ),
-      )}
-    </div>
+        )}
+
+        {sources.map((s) =>
+          editId === s.id ? (
+            <SourceForm
+              key={s.id}
+              kind={kind}
+              source={s}
+              onDone={done}
+              onCancel={() => setEditId(null)}
+              onMsg={onMsg}
+            />
+          ) : (
+            <div className="src-row" key={s.id}>
+              <div className="src-row-id">
+                <div className="src-row-name">{s.name}</div>
+                <div className="src-row-host">{s.host}</div>
+              </div>
+              <span className={"src-row-pill " + (s.enabled ? "ok" : "off")}>
+                {s.enabled ? "Active" : "Disabled"}
+              </span>
+              <div className="src-row-actions">
+                <button className="set-btn" onClick={() => setEditId(s.id)}>
+                  Edit
+                </button>
+                <button className="set-btn danger" onClick={() => remove(s.id, s.name)}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          ),
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -278,23 +324,23 @@ export default function SourcesSection() {
         title="Infrastructure Sources"
         sub="Unraid, UniFi and Proxmox endpoints Sentinel polls — credentials are stored in the database"
       >
-        <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 22 }}>
+        <div className="src-services">
           {!sources && <div className="set-note">Loading…</div>}
           {sources && (
             <>
-              <SourceSection
+              <ServicePanel
                 kind="unraid"
                 sources={sources.unraid}
                 onChanged={reload}
                 onMsg={showMsg}
               />
-              <SourceSection
+              <ServicePanel
                 kind="unifi"
                 sources={sources.unifi}
                 onChanged={reload}
                 onMsg={showMsg}
               />
-              <SourceSection
+              <ServicePanel
                 kind="proxmox"
                 sources={sources.proxmox}
                 onChanged={reload}
