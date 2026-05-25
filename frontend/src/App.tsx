@@ -7,6 +7,7 @@ import { SettingsPanel, useSettings } from "./settings";
 import Dashboard from "./pages/Dashboard";
 import Unifi from "./pages/Unifi";
 import NetworkScanner from "./pages/NetworkScanner";
+import NetworkHostDetail from "./pages/NetworkHostDetail";
 import Proxmox from "./pages/Proxmox";
 import Unraid from "./pages/Unraid";
 import Alerts from "./pages/Alerts";
@@ -26,6 +27,7 @@ const PAGES: Record<string, { crumb: string; title: string }> = {
   dashboard: { crumb: "Overview / Cluster", title: "Operations Dashboard" },
   unifi: { crumb: "Network / UniFi", title: "UniFi Network Devices" },
   "network-scanner": { crumb: "Network / Scanner", title: "Network Scanner" },
+  "network-host": { crumb: "Network / Scanner / Host", title: "Host Details" },
   proxmox: { crumb: "Compute / Proxmox VE", title: "Proxmox Servers & Guests" },
   unraid: { crumb: "Storage / Unraid", title: "Unraid Servers" },
   alerts: { crumb: "Operations / Alerts", title: "Alerts" },
@@ -39,6 +41,7 @@ const EDITABLE_PAGES = new Set(["dashboard", "unifi", "proxmox", "unraid"]);
 function resolvePage(): string {
   const path = location.pathname.replace(/^\/+|\/+$/g, "");
   if (PAGES[path]) return path;
+  if (path.startsWith("network-scanner/")) return "network-host";
   // /settings/<section> still resolves to the settings page.
   if (path === "settings" || path.startsWith("settings/")) return "settings";
   const hash = location.hash.replace(/^#/, "");
@@ -53,9 +56,15 @@ function resolveSettingsSection(): SectionId {
   return s && isSectionId(s) ? s : DEFAULT_SECTION;
 }
 
+function resolveNetworkHost(): string {
+  const m = location.pathname.match(/^\/network-scanner\/([^/?#]+)/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
 const pathForPage = (p: string, section?: string): string => {
   if (p === "dashboard") return "/";
   if (p === "settings") return "/settings/" + (section ?? DEFAULT_SECTION);
+  if (p === "network-host") return "/network-scanner/" + encodeURIComponent(section ?? "");
   return "/" + p;
 };
 
@@ -168,6 +177,7 @@ function AppBody({
   const { settings, setSetting } = useSettings();
   const onboarding = useOnboarding(justSetUp);
   const [page, setPageState] = React.useState<string>(resolvePage);
+  const [networkHost, setNetworkHost] = React.useState<string>(resolveNetworkHost);
   const [settingsSection, setSettingsSection] =
     React.useState<SectionId>(resolveSettingsSection);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
@@ -191,6 +201,8 @@ function AppBody({
       setSettingsSection(
         section && isSectionId(section) ? section : DEFAULT_SECTION,
       );
+    } else if (p === "network-host") {
+      setNetworkHost(section ?? "");
     }
     window.scrollTo(0, 0);
   }, []);
@@ -230,12 +242,13 @@ function AppBody({
     if (current === "settings") {
       // Bare /settings → default sub-section.
       window.history.replaceState({}, "", "/settings/" + DEFAULT_SECTION);
-    } else if (!PAGES[current] && !current.startsWith("settings/")) {
+    } else if (!PAGES[current] && !current.startsWith("settings/") && !current.startsWith("network-scanner/")) {
       const hash = location.hash.replace(/^#/, "");
       if (PAGES[hash]) window.history.replaceState({}, "", pathForPage(hash));
     }
     const onPop = () => {
       setPageState(resolvePage());
+      setNetworkHost(resolveNetworkHost());
       setSettingsSection(resolveSettingsSection());
     };
     window.addEventListener("popstate", onPop);
@@ -246,6 +259,8 @@ function AppBody({
   React.useEffect(() => {
     if (page === "settings") {
       document.title = `Cybex Sentinel · Settings · ${SECTION_CRUMB[settingsSection]}`;
+    } else if (page === "network-host") {
+      document.title = `Cybex Sentinel · Host · ${networkHost || "Detail"}`;
     } else {
       document.title = PAGES[page]
         ? `Cybex Sentinel · ${PAGES[page].title}`
@@ -323,6 +338,12 @@ function AppBody({
           ...baseMeta,
           crumb: baseMeta.crumb + " / " + SECTION_CRUMB[settingsSection],
         }
+      : page === "network-host"
+        ? {
+            ...baseMeta,
+            crumb: networkHost ? `${baseMeta.crumb} / ${networkHost}` : baseMeta.crumb,
+            title: networkHost || baseMeta.title,
+          }
       : baseMeta;
   const alertCount = snap.alerts.alerts.filter((a) => a.status === "open").length;
   const stale = staleSec > Math.max(20, snap.pollIntervalSec * 3);
@@ -350,7 +371,21 @@ function AppBody({
       );
       break;
     case "network-scanner":
-      pageEl = <NetworkScanner onConfigure={() => navigate("settings", "network-scanner")} />;
+      pageEl = (
+        <NetworkScanner
+          onConfigure={() => navigate("settings", "network-scanner")}
+          onOpenHost={(target) => navigate("network-host", target)}
+        />
+      );
+      break;
+    case "network-host":
+      pageEl = (
+        <NetworkHostDetail
+          target={networkHost}
+          onBack={() => navigate("network-scanner")}
+          onConfigure={() => navigate("settings", "network-scanner")}
+        />
+      );
       break;
     case "unraid":
       pageEl = (

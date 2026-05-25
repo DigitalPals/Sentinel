@@ -1,6 +1,7 @@
 // Shared icon bridge. Product marks come from Simple Icons; UI glyphs come from Lucide.
 import React from "react";
 import {
+  ArrowLeft,
   BatteryCharging,
   Bell,
   Camera,
@@ -37,6 +38,7 @@ import { siProxmox, siUbiquiti, siUnraid, type SimpleIcon } from "simple-icons";
 
 const UI_ICONS: Record<string, LucideIcon> = {
   dashboard: LayoutDashboard,
+  back: ArrowLeft,
   network: Network,
   server: Server,
   storage: Database,

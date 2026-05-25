@@ -4,9 +4,12 @@
 //! `/proxy/network/integration/v1`. The UniFi OS console serves a self-signed
 //! certificate, so verification is disabled.
 
+use std::collections::BTreeMap;
+
 use anyhow::Context;
 use futures::stream::{self, StreamExt};
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::config::UnifiConfig;
 
@@ -29,6 +32,8 @@ struct Page<T> {
 pub struct Site {
     pub id: String,
     pub name: String,
+    #[serde(default, rename = "internalReference")]
+    pub internal_reference: Option<String>,
 }
 
 /// Device as returned by the list endpoint (`features`/`interfaces` are arrays).
@@ -60,7 +65,14 @@ pub struct DeviceDetail {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Uplink {
+    #[serde(default, alias = "uplinkDeviceId")]
     pub device_id: Option<String>,
+    #[serde(default, alias = "uplinkDeviceName")]
+    pub device_name: Option<String>,
+    #[serde(default, alias = "portIdx", alias = "port", alias = "switchPort")]
+    pub port_idx: Option<u32>,
+    #[serde(default, alias = "portName", alias = "switchPortName")]
+    pub port_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -123,9 +135,122 @@ pub struct StatsUplink {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UniClient {
+    #[serde(default, alias = "_id")]
+    pub id: Option<String>,
     #[serde(rename = "type")]
     pub kind: Option<String>,
+    #[serde(default, alias = "mac")]
+    pub mac_address: Option<String>,
+    #[serde(default, alias = "ip")]
+    pub ip_address: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub hostname: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub network_name: Option<String>,
+    #[serde(default, alias = "essid")]
+    pub ssid: Option<String>,
+    #[serde(default)]
+    pub connected_at: Option<String>,
+    #[serde(default)]
+    pub last_seen_at: Option<String>,
+    #[serde(default, alias = "uplinkDeviceID")]
     pub uplink_device_id: Option<String>,
+    #[serde(default)]
+    pub uplink_device_name: Option<String>,
+    #[serde(default, alias = "portIdx", alias = "swPort", alias = "switchPort")]
+    pub uplink_port: Option<u32>,
+    #[serde(default, alias = "switchPortName")]
+    pub uplink_port_name: Option<String>,
+    #[serde(default)]
+    pub rx_rate_bps: Option<u64>,
+    #[serde(default)]
+    pub tx_rate_bps: Option<u64>,
+    #[serde(default)]
+    pub rx_bytes: Option<u64>,
+    #[serde(default)]
+    pub tx_bytes: Option<u64>,
+    #[serde(default)]
+    pub signal: Option<i64>,
+    #[serde(default)]
+    pub channel: Option<u32>,
+    #[serde(default)]
+    pub vlan_id: Option<u32>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LegacyClient {
+    #[serde(default, rename = "_id")]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub mac: Option<String>,
+    #[serde(default, alias = "ipAddress")]
+    pub ip: Option<String>,
+    #[serde(default)]
+    pub fixed_ip: Option<String>,
+    #[serde(default)]
+    pub last_ip: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub hostname: Option<String>,
+    #[serde(default)]
+    pub network: Option<String>,
+    #[serde(default)]
+    pub last_connection_network_name: Option<String>,
+    #[serde(default)]
+    pub gw_vlan: Option<u32>,
+    #[serde(default)]
+    pub vlan: Option<u32>,
+    #[serde(default)]
+    pub is_wired: Option<bool>,
+    #[serde(default)]
+    pub first_seen: Option<i64>,
+    #[serde(default)]
+    pub last_seen: Option<i64>,
+    #[serde(default)]
+    pub sw_mac: Option<String>,
+    #[serde(default)]
+    pub sw_port: Option<u32>,
+    #[serde(default)]
+    pub wired_rate_mbps: Option<u32>,
+    #[serde(default)]
+    pub last_uplink_name: Option<String>,
+    #[serde(default)]
+    pub last_uplink_mac: Option<String>,
+    #[serde(default)]
+    pub last_uplink_remote_port: Option<u32>,
+    #[serde(default, rename = "wired-tx_bytes")]
+    pub wired_tx_bytes: Option<u64>,
+    #[serde(default, rename = "wired-rx_bytes")]
+    pub wired_rx_bytes: Option<u64>,
+    #[serde(default, rename = "wired-tx_bytes-r")]
+    pub wired_tx_bytes_rate: Option<f64>,
+    #[serde(default, rename = "wired-rx_bytes-r")]
+    pub wired_rx_bytes_rate: Option<f64>,
+    #[serde(default)]
+    pub tx_bytes: Option<u64>,
+    #[serde(default)]
+    pub rx_bytes: Option<u64>,
+    #[serde(default, rename = "tx_bytes-r")]
+    pub tx_bytes_rate: Option<f64>,
+    #[serde(default, rename = "rx_bytes-r")]
+    pub rx_bytes_rate: Option<f64>,
+    #[serde(default)]
+    pub signal: Option<i64>,
+    #[serde(default)]
+    pub channel: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct LegacyClientEnvelope {
+    #[serde(default)]
+    data: Vec<LegacyClient>,
 }
 
 /// Everything gathered about one device in a single poll.
@@ -137,6 +262,8 @@ pub struct DeviceBundle {
 
 /// Result of one full UniFi poll.
 pub struct UnifiData {
+    pub site_id: String,
+    pub site_reference: String,
     pub site: String,
     pub app_version: String,
     pub devices: Vec<DeviceBundle>,
@@ -264,10 +391,109 @@ impl UnifiClient {
             .await;
 
         Ok(UnifiData {
+            site_id: site.id,
+            site_reference: site
+                .internal_reference
+                .clone()
+                .unwrap_or_else(|| site.name.clone()),
             site: site.name,
             app_version,
             devices,
             clients,
         })
+    }
+
+    pub async fn client_detail(&self, site_id: &str, client_id: &str) -> anyhow::Result<UniClient> {
+        self.get_json::<UniClient>(&format!("/sites/{site_id}/clients/{client_id}"))
+            .await
+            .context("client detail")
+    }
+
+    pub async fn legacy_clients(&self, site_reference: &str) -> anyhow::Result<Vec<LegacyClient>> {
+        let base = self
+            .base
+            .strip_suffix("/proxy/network/integration/v1")
+            .unwrap_or(&self.base);
+        let path = format!("/proxy/network/api/s/{site_reference}/stat/sta");
+        let url = format!("{base}{path}");
+        let resp = self
+            .http
+            .get(&url)
+            .header("X-API-KEY", &self.key)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .with_context(|| format!("requesting {url}"))?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!(
+                "{url} returned HTTP {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
+        }
+        let envelope: LegacyClientEnvelope =
+            serde_json::from_str(&body).with_context(|| format!("decoding {url}"))?;
+        Ok(envelope.data)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_legacy_wired_client_switch_port_fields() {
+        let json = r#"{
+          "data": [{
+            "_id": "647329e511675c0098d3b9c5",
+            "ip": "10.10.0.3",
+            "last_ip": "10.10.0.3",
+            "fixed_ip": "10.10.0.3",
+            "mac": "28:9c:6e:59:fe:f6",
+            "name": "Modbus-Generator",
+            "network": "Default",
+            "last_connection_network_name": "Default",
+            "gw_vlan": 1,
+            "is_wired": true,
+            "first_seen": 1685268965,
+            "last_seen": 1779694335,
+            "last_uplink_name": "Schuilstal",
+            "last_uplink_mac": "24:5a:4c:15:dd:5b",
+            "last_uplink_remote_port": 13,
+            "sw_mac": "24:5a:4c:15:dd:5b",
+            "sw_port": 13,
+            "wired_rate_mbps": 10,
+            "wired-tx_bytes": 3272419325,
+            "wired-rx_bytes": 62527001,
+            "wired-tx_bytes-r": 2.6800889005098707,
+            "wired-rx_bytes-r": 2.1571447248006277
+          }]
+        }"#;
+
+        let envelope: LegacyClientEnvelope = serde_json::from_str(json).unwrap();
+        let client = &envelope.data[0];
+        assert_eq!(client.ip.as_deref(), Some("10.10.0.3"));
+        assert_eq!(client.last_ip.as_deref(), Some("10.10.0.3"));
+        assert_eq!(client.fixed_ip.as_deref(), Some("10.10.0.3"));
+        assert_eq!(client.network.as_deref(), Some("Default"));
+        assert_eq!(client.last_connection_network_name.as_deref(), Some("Default"));
+        assert_eq!(client.gw_vlan, Some(1));
+        assert_eq!(client.last_uplink_name.as_deref(), Some("Schuilstal"));
+        assert_eq!(client.sw_mac.as_deref(), Some("24:5a:4c:15:dd:5b"));
+        assert_eq!(client.sw_port, Some(13));
+        assert_eq!(client.wired_rate_mbps, Some(10));
+        assert_eq!(client.wired_tx_bytes, Some(3_272_419_325));
+        assert_eq!(client.wired_rx_bytes, Some(62_527_001));
+        assert_eq!(client.is_wired, Some(true));
+    }
+
+    #[test]
+    fn parses_integration_site_internal_reference() {
+        let site: Site = serde_json::from_str(
+            r#"{"id":"site-id","internalReference":"default","name":"Default"}"#,
+        )
+        .unwrap();
+        assert_eq!(site.internal_reference.as_deref(), Some("default"));
     }
 }

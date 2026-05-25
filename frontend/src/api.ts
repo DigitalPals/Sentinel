@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppSettings,
   AuthStatus,
+  NetworkHostDetail,
+  NetworkHostUnifi,
   NetworkScannerOverview,
   NetworkScannerSettings,
   PushStatus,
@@ -27,6 +29,12 @@ export type {
   NodeTile,
   NotificationSettings,
   NetworkDiscoverySettings,
+  NetworkHostConnection,
+  NetworkHostDetail,
+  NetworkHostTraffic,
+  NetworkHostUnifi,
+  NetworkHostUnifiClient,
+  NetworkHostUnifiDevice,
   NetworkPortScanSettings,
   NetworkScanDevice,
   NetworkScanJob,
@@ -269,6 +277,18 @@ export async function getNetworkScanner(): Promise<NetworkScannerOverview> {
   return jsonOrThrow(await apiFetch("/api/network-scanner"));
 }
 
+export async function getNetworkHost(target: string): Promise<NetworkHostDetail> {
+  return jsonOrThrow(
+    await apiFetch(`/api/network-scanner/hosts/${encodeURIComponent(target)}`),
+  );
+}
+
+export async function getNetworkHostUnifi(target: string): Promise<NetworkHostUnifi> {
+  return jsonOrThrow(
+    await apiFetch(`/api/network-scanner/hosts/${encodeURIComponent(target)}/unifi`),
+  );
+}
+
 export async function startNetworkScan(
   settings?: NetworkScannerSettings,
   force = false,
@@ -279,6 +299,15 @@ export async function startNetworkScan(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ settings, force }),
     }),
+  );
+}
+
+export async function startHostPortScan(target: string): Promise<{ id: number }> {
+  return jsonOrThrow(
+    await apiFetch(
+      `/api/network-scanner/hosts/${encodeURIComponent(target)}/port-scan`,
+      { method: "POST" },
+    ),
   );
 }
 

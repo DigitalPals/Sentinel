@@ -1,6 +1,6 @@
 //! HTTP surface: the JSON API plus the bundled single-page frontend.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{
     extract::{Path, State},
@@ -28,7 +28,7 @@ use crate::notify::{
     self, NotificationChannel, NotificationSettingsPublic, NotificationSettingsUpdate,
 };
 use crate::proxmox::ProxmoxClient;
-use crate::unifi::UnifiClient;
+use crate::unifi::{DeviceBundle, LegacyClient, UniClient, UnifiClient};
 use crate::unraid::UnraidClient;
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -48,6 +48,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/alerts/action", post(alert_action))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/network-scanner", get(get_network_scanner))
+        .route("/api/network-scanner/hosts/:target", get(get_network_host))
+        .route(
+            "/api/network-scanner/hosts/:target/unifi",
+            get(get_network_host_unifi),
+        )
+        .route(
+            "/api/network-scanner/hosts/:target/port-scan",
+            post(start_host_port_scan),
+        )
         .route("/api/network-scanner/scan", post(start_network_scan))
         .route(
             "/api/network-scanner/jobs/:id/cancel",
@@ -475,6 +484,79 @@ impl From<db::NetworkScanDeviceRow> for NetworkScanDeviceOut {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct NetworkHostTrafficOut {
+    tx_mbps: Option<f64>,
+    rx_mbps: Option<f64>,
+    tx_bytes: Option<u64>,
+    rx_bytes: Option<u64>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct NetworkHostUnifiDeviceOut {
+    id: String,
+    name: String,
+    kind: String,
+    model: String,
+    ip: String,
+    mac: String,
+    state: String,
+    site: String,
+    tx_mbps: f64,
+    rx_mbps: f64,
+    clients: u32,
+    cpu: u32,
+    mem: u32,
+    firmware: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkHostUnifiClientOut {
+    id: Option<String>,
+    name: Option<String>,
+    kind: Option<String>,
+    ip: Option<String>,
+    mac: Option<String>,
+    network_name: Option<String>,
+    ssid: Option<String>,
+    connected_at: Option<String>,
+    last_seen_at: Option<String>,
+    signal: Option<i64>,
+    channel: Option<u32>,
+    vlan_id: Option<u32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkHostConnectionOut {
+    connection_type: String,
+    uplink_device: Option<NetworkHostUnifiDeviceOut>,
+    uplink_device_id: Option<String>,
+    uplink_device_name: Option<String>,
+    port_idx: Option<u32>,
+    port_name: Option<String>,
+    port_state: Option<String>,
+    port_speed_mbps: Option<u32>,
+    poe: Option<bool>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkHostUnifiOut {
+    configured: bool,
+    site: Option<String>,
+    app_version: Option<String>,
+    matched_by: Option<String>,
+    client: Option<NetworkHostUnifiClientOut>,
+    device: Option<NetworkHostUnifiDeviceOut>,
+    connection: Option<NetworkHostConnectionOut>,
+    traffic: Option<NetworkHostTrafficOut>,
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct NetworkScannerResponse {
     settings: NetworkScannerSettings,
     active_job: Option<NetworkScanJobOut>,
@@ -482,6 +564,17 @@ struct NetworkScannerResponse {
     jobs: Vec<NetworkScanJobOut>,
     devices: Vec<NetworkScanDeviceOut>,
     inventory: Vec<NetworkScanDeviceOut>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkHostDetailResponse {
+    target: String,
+    settings: NetworkScannerSettings,
+    active_job: Option<NetworkScanJobOut>,
+    host: Option<NetworkScanDeviceOut>,
+    observations: Vec<NetworkScanDeviceOut>,
+    unifi: Option<NetworkHostUnifiOut>,
 }
 
 async fn get_network_scanner(
@@ -503,6 +596,867 @@ async fn get_network_scanner(
         devices: devices.into_iter().map(Into::into).collect(),
         inventory: inventory.into_iter().map(Into::into).collect(),
     }))
+}
+
+async fn get_network_host(
+    State(state): State<Arc<AppState>>,
+    Path(target): Path<String>,
+) -> ApiResult<NetworkHostDetailResponse> {
+    let target = target.trim().to_string();
+    if target.is_empty() {
+        return Err(bad_request("host target is required"));
+    }
+
+    let inventory = db::network_scan_inventory_host(&state.pool, &target).await?;
+    let observations = db::network_scan_host_observations(&state.pool, &target, 30).await?;
+    let host = inventory.clone().or_else(|| observations.first().cloned());
+
+    if host.is_none() {
+        return Err(not_found("unknown network host"));
+    }
+
+    let active = db::active_network_scan_job(&state.pool).await?;
+    Ok(Json(NetworkHostDetailResponse {
+        target,
+        settings: state.config().network_scanner.clone(),
+        active_job: active.map(Into::into),
+        host: host.map(Into::into),
+        observations: observations.into_iter().map(Into::into).collect(),
+        unifi: None,
+    }))
+}
+
+async fn get_network_host_unifi(
+    State(state): State<Arc<AppState>>,
+    Path(target): Path<String>,
+) -> ApiResult<NetworkHostUnifiOut> {
+    let target = target.trim().to_string();
+    if target.is_empty() {
+        return Err(bad_request("host target is required"));
+    }
+    let inventory = db::network_scan_inventory_host(&state.pool, &target).await?;
+    let observations = db::network_scan_host_observations(&state.pool, &target, 1).await?;
+    let host = inventory.as_ref().or_else(|| observations.first());
+    Ok(Json(build_unifi_host_detail(&state, &target, host).await))
+}
+
+async fn build_unifi_host_detail(
+    state: &AppState,
+    target: &str,
+    host: Option<&db::NetworkScanDeviceRow>,
+) -> NetworkHostUnifiOut {
+    let cfg = state.config();
+    let Some(unifi_cfg) = cfg.unifi.clone() else {
+        return NetworkHostUnifiOut {
+            configured: false,
+            site: None,
+            app_version: None,
+            matched_by: None,
+            client: None,
+            device: None,
+            connection: None,
+            traffic: None,
+            error: None,
+        };
+    };
+    let timeout = cfg.http_timeout_sec;
+    drop(cfg);
+
+    let client = match UnifiClient::new(&unifi_cfg, timeout) {
+        Ok(c) => c,
+        Err(e) => {
+            return NetworkHostUnifiOut {
+                configured: true,
+                site: None,
+                app_version: None,
+                matched_by: None,
+                client: None,
+                device: None,
+                connection: None,
+                traffic: None,
+                error: Some(format!("{e:#}")),
+            }
+        }
+    };
+    let data = match client.collect().await {
+        Ok(d) => d,
+        Err(e) => {
+            return NetworkHostUnifiOut {
+                configured: true,
+                site: None,
+                app_version: None,
+                matched_by: None,
+                client: None,
+                device: None,
+                connection: None,
+                traffic: None,
+                error: Some(format!("{e:#}")),
+            }
+        }
+    };
+
+    let host_ip = host.map(|h| h.ip.as_str()).unwrap_or(target);
+    let host_mac = host.and_then(|h| h.mac.as_deref());
+
+    let mut devices_by_id: HashMap<String, &DeviceBundle> = HashMap::new();
+    for device in &data.devices {
+        devices_by_id.insert(device.list.id.clone(), device);
+    }
+
+    let mut clients_per_device: HashMap<String, u32> = HashMap::new();
+    for c in &data.clients {
+        if let Some(id) = client_uplink_device_id(c) {
+            *clients_per_device.entry(id).or_insert(0) += 1;
+        }
+    }
+
+    let legacy_match = match client.legacy_clients(&data.site_reference).await {
+        Ok(clients) => clients
+            .into_iter()
+            .find(|c| unifi_legacy_client_matches(c, target, host_ip, host_mac)),
+        Err(e) => {
+            tracing::debug!("could not load UniFi legacy client stats: {e:#}");
+            None
+        }
+    };
+
+    let matched_device = data
+        .devices
+        .iter()
+        .find(|d| unifi_device_matches(d, target, host_ip, host_mac));
+
+    let mut matched_client = data
+        .clients
+        .iter()
+        .find(|c| unifi_client_matches(c, target, host_ip, host_mac))
+        .cloned();
+
+    if let Some(base) = matched_client.take() {
+        matched_client = match client_client_id(&base) {
+            Some(id) => match client.client_detail(&data.site_id, &id).await {
+                Ok(detail) => Some(merge_unifi_client(base, detail)),
+                Err(_) => Some(base),
+            },
+            None => Some(base),
+        };
+    }
+
+    let matched_by = matched_device
+        .and_then(|d| unifi_device_match_kind(d, target, host_ip, host_mac))
+        .or_else(|| {
+            matched_client
+                .as_ref()
+                .and_then(|c| unifi_client_match_kind(c, target, host_ip, host_mac))
+        })
+        .or_else(|| {
+            legacy_match
+                .as_ref()
+                .and_then(|c| unifi_legacy_client_match_kind(c, target, host_ip, host_mac))
+        });
+
+    let device_out = matched_device.map(|d| {
+        unifi_device_out(
+            d,
+            &data.site,
+            clients_per_device.get(&d.list.id).copied().unwrap_or(0),
+        )
+    });
+    let client_out = matched_client
+        .as_ref()
+        .map(|c| unifi_client_out(c, legacy_match.as_ref()))
+        .or_else(|| legacy_match.as_ref().map(unifi_legacy_client_out));
+
+    let connection = if let Some(device) = matched_device {
+        unifi_device_connection(device, &devices_by_id, &clients_per_device, &data.site)
+    } else if let Some(legacy) = legacy_match.as_ref() {
+        unifi_legacy_client_connection(
+            legacy,
+            &data.devices,
+            &clients_per_device,
+            &data.site,
+        )
+    } else {
+        matched_client
+            .as_ref()
+            .map(|c| unifi_client_connection(c, &devices_by_id, &clients_per_device, &data.site))
+    };
+
+    let traffic = matched_device
+        .map(unifi_device_traffic)
+        .or_else(|| legacy_match.as_ref().map(unifi_legacy_client_traffic))
+        .or_else(|| matched_client.as_ref().map(unifi_client_traffic));
+
+    NetworkHostUnifiOut {
+        configured: true,
+        site: Some(data.site.clone()),
+        app_version: Some(data.app_version.clone()),
+        matched_by,
+        client: client_out,
+        device: device_out,
+        connection,
+        traffic,
+        error: None,
+    }
+}
+
+fn unifi_device_out(bundle: &DeviceBundle, site: &str, clients: u32) -> NetworkHostUnifiDeviceOut {
+    let tx_rate = bundle
+        .stats
+        .uplink
+        .as_ref()
+        .and_then(|u| u.tx_rate_bps)
+        .unwrap_or(0);
+    let rx_rate = bundle
+        .stats
+        .uplink
+        .as_ref()
+        .and_then(|u| u.rx_rate_bps)
+        .unwrap_or(0);
+    NetworkHostUnifiDeviceOut {
+        id: bundle.list.id.clone(),
+        name: bundle
+            .list
+            .name
+            .clone()
+            .unwrap_or_else(|| bundle.list.id.clone()),
+        kind: unifi_device_kind(bundle).to_string(),
+        model: bundle.list.model.clone().unwrap_or_default(),
+        ip: bundle.list.ip_address.clone().unwrap_or_default(),
+        mac: bundle.list.mac_address.clone().unwrap_or_default(),
+        state: bundle.list.state.clone().unwrap_or_default(),
+        site: site.to_string(),
+        tx_mbps: rate_to_mbps(tx_rate),
+        rx_mbps: rate_to_mbps(rx_rate),
+        clients,
+        cpu: bundle.stats.cpu_utilization_pct.unwrap_or(0.0).round() as u32,
+        mem: bundle.stats.memory_utilization_pct.unwrap_or(0.0).round() as u32,
+        firmware: bundle.list.firmware_version.clone().unwrap_or_default(),
+    }
+}
+
+fn unifi_client_out(
+    client: &UniClient,
+    legacy: Option<&LegacyClient>,
+) -> NetworkHostUnifiClientOut {
+    NetworkHostUnifiClientOut {
+        id: client_client_id(client),
+        name: client_display_name(client).or_else(|| legacy.and_then(legacy_display_name)),
+        kind: client.kind.clone(),
+        ip: client_ip(client),
+        mac: client_mac(client),
+        network_name: client
+            .network_name
+            .clone()
+            .or_else(|| extra_string(client, &["network", "networkName"]))
+            .or_else(|| legacy.and_then(legacy_network_name)),
+        ssid: client
+            .ssid
+            .clone()
+            .or_else(|| extra_string(client, &["ssid", "essid"])),
+        connected_at: client
+            .connected_at
+            .clone()
+            .or_else(|| extra_string(client, &["connectedAt", "firstSeenAt"]))
+            .or_else(|| legacy.and_then(|c| c.first_seen).map(epoch_to_rfc3339)),
+        last_seen_at: client
+            .last_seen_at
+            .clone()
+            .or_else(|| extra_string(client, &["lastSeenAt", "lastSeen"]))
+            .or_else(|| legacy.and_then(|c| c.last_seen).map(epoch_to_rfc3339)),
+        signal: client
+            .signal
+            .or_else(|| extra_i64(client, &["signal", "rssi"]))
+            .or_else(|| legacy.and_then(|c| c.signal)),
+        channel: client
+            .channel
+            .or_else(|| extra_u32(client, &["channel"]))
+            .or_else(|| legacy.and_then(|c| c.channel)),
+        vlan_id: client
+            .vlan_id
+            .or_else(|| extra_u32(client, &["vlanId", "vlan"]))
+            .or_else(|| legacy.and_then(legacy_vlan)),
+    }
+}
+
+fn unifi_legacy_client_out(client: &LegacyClient) -> NetworkHostUnifiClientOut {
+    NetworkHostUnifiClientOut {
+        id: client.id.clone().or_else(|| client.mac.clone()),
+        name: legacy_display_name(client),
+        kind: Some(if client.is_wired.unwrap_or(false) {
+            "WIRED".to_string()
+        } else {
+            "WIRELESS".to_string()
+        }),
+        ip: legacy_ip(client),
+        mac: client.mac.clone(),
+        network_name: legacy_network_name(client),
+        ssid: None,
+        connected_at: client.first_seen.map(epoch_to_rfc3339),
+        last_seen_at: client.last_seen.map(epoch_to_rfc3339),
+        signal: client.signal,
+        channel: client.channel,
+        vlan_id: legacy_vlan(client),
+    }
+}
+
+fn unifi_client_connection(
+    client: &UniClient,
+    devices_by_id: &HashMap<String, &DeviceBundle>,
+    clients_per_device: &HashMap<String, u32>,
+    site: &str,
+) -> NetworkHostConnectionOut {
+    let uplink_id = client_uplink_device_id(client);
+    let uplink = uplink_id
+        .as_ref()
+        .and_then(|id| devices_by_id.get(id).copied());
+    let port_idx = client_uplink_port(client);
+    let port = uplink.and_then(|d| unifi_port(d, port_idx));
+    NetworkHostConnectionOut {
+        connection_type: client
+            .kind
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string())
+            .to_ascii_lowercase(),
+        uplink_device: uplink.map(|d| {
+            unifi_device_out(
+                d,
+                site,
+                clients_per_device.get(&d.list.id).copied().unwrap_or(0),
+            )
+        }),
+        uplink_device_id: uplink_id.clone(),
+        uplink_device_name: client
+            .uplink_device_name
+            .clone()
+            .or_else(|| extra_string(client, &["uplinkDeviceName"])),
+        port_idx,
+        port_name: client
+            .uplink_port_name
+            .clone()
+            .or_else(|| extra_string(client, &["uplinkPortName", "switchPortName"])),
+        port_state: port.and_then(|p| p.state.clone()),
+        port_speed_mbps: port.and_then(|p| p.speed_mbps),
+        poe: port.and_then(|p| p.poe.as_ref().map(|poe| poe.enabled)),
+    }
+}
+
+fn unifi_legacy_client_connection(
+    client: &LegacyClient,
+    devices: &[DeviceBundle],
+    clients_per_device: &HashMap<String, u32>,
+    site: &str,
+) -> Option<NetworkHostConnectionOut> {
+    let switch_mac = client.sw_mac.as_deref().or(client.last_uplink_mac.as_deref());
+    let uplink = switch_mac.and_then(|mac| {
+        devices.iter().find(|d| {
+            d.list
+                .mac_address
+                .as_deref()
+                .map(|device_mac| mac_eq(device_mac, mac))
+                .unwrap_or(false)
+        })
+    });
+    let port_idx = client.sw_port.or(client.last_uplink_remote_port);
+    let port = uplink.and_then(|d| unifi_port(d, port_idx));
+    Some(NetworkHostConnectionOut {
+        connection_type: if client.is_wired.unwrap_or(false) {
+            "wired".to_string()
+        } else {
+            "wireless".to_string()
+        },
+        uplink_device: uplink.map(|d| {
+            unifi_device_out(
+                d,
+                site,
+                clients_per_device.get(&d.list.id).copied().unwrap_or(0),
+            )
+        }),
+        uplink_device_id: uplink.map(|d| d.list.id.clone()),
+        uplink_device_name: client.last_uplink_name.clone(),
+        port_idx,
+        port_name: port_idx.map(|idx| format!("Port {idx}")),
+        port_state: port.and_then(|p| p.state.clone()),
+        port_speed_mbps: port
+            .and_then(|p| p.speed_mbps)
+            .or(client.wired_rate_mbps),
+        poe: port.and_then(|p| p.poe.as_ref().map(|poe| poe.enabled)),
+    })
+}
+
+fn unifi_device_connection(
+    device: &DeviceBundle,
+    devices_by_id: &HashMap<String, &DeviceBundle>,
+    clients_per_device: &HashMap<String, u32>,
+    site: &str,
+) -> Option<NetworkHostConnectionOut> {
+    let uplink = device.detail.uplink.as_ref()?;
+    let uplink_id = uplink.device_id.clone();
+    let uplink_device = uplink_id
+        .as_ref()
+        .and_then(|id| devices_by_id.get(id).copied());
+    let port = uplink_device.and_then(|d| unifi_port(d, uplink.port_idx));
+    Some(NetworkHostConnectionOut {
+        connection_type: "device-uplink".to_string(),
+        uplink_device: uplink_device.map(|d| {
+            unifi_device_out(
+                d,
+                site,
+                clients_per_device.get(&d.list.id).copied().unwrap_or(0),
+            )
+        }),
+        uplink_device_id: uplink_id,
+        uplink_device_name: uplink.device_name.clone(),
+        port_idx: uplink.port_idx,
+        port_name: uplink.port_name.clone(),
+        port_state: port.and_then(|p| p.state.clone()),
+        port_speed_mbps: port.and_then(|p| p.speed_mbps),
+        poe: port.and_then(|p| p.poe.as_ref().map(|poe| poe.enabled)),
+    })
+}
+
+fn unifi_device_traffic(bundle: &DeviceBundle) -> NetworkHostTrafficOut {
+    let tx_rate = bundle.stats.uplink.as_ref().and_then(|u| u.tx_rate_bps);
+    let rx_rate = bundle.stats.uplink.as_ref().and_then(|u| u.rx_rate_bps);
+    NetworkHostTrafficOut {
+        tx_mbps: tx_rate.map(rate_to_mbps),
+        rx_mbps: rx_rate.map(rate_to_mbps),
+        tx_bytes: None,
+        rx_bytes: None,
+    }
+}
+
+fn unifi_client_traffic(client: &UniClient) -> NetworkHostTrafficOut {
+    let tx_rate = client
+        .tx_rate_bps
+        .or_else(|| extra_u64(client, &["txRateBps", "txRate", "tx_rate_bps"]));
+    let rx_rate = client
+        .rx_rate_bps
+        .or_else(|| extra_u64(client, &["rxRateBps", "rxRate", "rx_rate_bps"]));
+    NetworkHostTrafficOut {
+        tx_mbps: tx_rate.map(rate_to_mbps),
+        rx_mbps: rx_rate.map(rate_to_mbps),
+        tx_bytes: client
+            .tx_bytes
+            .or_else(|| extra_u64(client, &["txBytes", "bytesOut"])),
+        rx_bytes: client
+            .rx_bytes
+            .or_else(|| extra_u64(client, &["rxBytes", "bytesIn"])),
+    }
+}
+
+fn unifi_legacy_client_traffic(client: &LegacyClient) -> NetworkHostTrafficOut {
+    let tx_rate = client.wired_tx_bytes_rate.or(client.tx_bytes_rate);
+    let rx_rate = client.wired_rx_bytes_rate.or(client.rx_bytes_rate);
+    NetworkHostTrafficOut {
+        tx_mbps: tx_rate.map(bytes_per_sec_to_mbps),
+        rx_mbps: rx_rate.map(bytes_per_sec_to_mbps),
+        tx_bytes: client.wired_tx_bytes.or(client.tx_bytes),
+        rx_bytes: client.wired_rx_bytes.or(client.rx_bytes),
+    }
+}
+
+fn unifi_device_matches(
+    device: &DeviceBundle,
+    target: &str,
+    host_ip: &str,
+    host_mac: Option<&str>,
+) -> bool {
+    device
+        .list
+        .ip_address
+        .as_deref()
+        .map(|ip| ip == target || ip == host_ip)
+        .unwrap_or(false)
+        || host_mac
+            .and_then(|mac| {
+                device
+                    .list
+                    .mac_address
+                    .as_deref()
+                    .map(|dmac| mac_eq(dmac, mac))
+            })
+            .unwrap_or(false)
+        || device
+            .list
+            .mac_address
+            .as_deref()
+            .map(|mac| mac_eq(mac, target))
+            .unwrap_or(false)
+}
+
+fn unifi_device_match_kind(
+    device: &DeviceBundle,
+    target: &str,
+    host_ip: &str,
+    host_mac: Option<&str>,
+) -> Option<String> {
+    if device
+        .list
+        .ip_address
+        .as_deref()
+        .map(|ip| ip == target || ip == host_ip)
+        .unwrap_or(false)
+    {
+        return Some("unifi-device-ip".to_string());
+    }
+    if let Some(mac) = host_mac {
+        if device
+            .list
+            .mac_address
+            .as_deref()
+            .map(|dmac| mac_eq(dmac, mac))
+            .unwrap_or(false)
+        {
+            return Some("unifi-device-mac".to_string());
+        }
+    }
+    if device
+        .list
+        .mac_address
+        .as_deref()
+        .map(|mac| mac_eq(mac, target))
+        .unwrap_or(false)
+    {
+        return Some("unifi-device-mac".to_string());
+    }
+    None
+}
+
+fn unifi_client_matches(
+    client: &UniClient,
+    target: &str,
+    host_ip: &str,
+    host_mac: Option<&str>,
+) -> bool {
+    client_ip(client)
+        .as_deref()
+        .map(|ip| ip == target || ip == host_ip)
+        .unwrap_or(false)
+        || host_mac
+            .map(|mac| {
+                client_mac(client)
+                    .as_deref()
+                    .map(|cmac| mac_eq(cmac, mac))
+                    .unwrap_or(false)
+                    || client_client_id(client)
+                        .as_deref()
+                        .map(|id| mac_eq(id, mac))
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false)
+        || client_mac(client)
+            .as_deref()
+            .map(|mac| mac_eq(mac, target))
+            .unwrap_or(false)
+        || client_client_id(client)
+            .as_deref()
+            .map(|id| mac_eq(id, target))
+            .unwrap_or(false)
+}
+
+fn unifi_client_match_kind(
+    client: &UniClient,
+    target: &str,
+    host_ip: &str,
+    host_mac: Option<&str>,
+) -> Option<String> {
+    if client_ip(client)
+        .as_deref()
+        .map(|ip| ip == target || ip == host_ip)
+        .unwrap_or(false)
+    {
+        return Some("unifi-client-ip".to_string());
+    }
+    if let Some(mac) = host_mac {
+        if client_mac(client)
+            .as_deref()
+            .map(|cmac| mac_eq(cmac, mac))
+            .unwrap_or(false)
+            || client_client_id(client)
+                .as_deref()
+                .map(|id| mac_eq(id, mac))
+                .unwrap_or(false)
+        {
+            return Some("unifi-client-mac".to_string());
+        }
+    }
+    if client_mac(client)
+        .as_deref()
+        .map(|mac| mac_eq(mac, target))
+        .unwrap_or(false)
+        || client_client_id(client)
+            .as_deref()
+            .map(|id| mac_eq(id, target))
+            .unwrap_or(false)
+    {
+        return Some("unifi-client-mac".to_string());
+    }
+    None
+}
+
+fn unifi_legacy_client_matches(
+    client: &LegacyClient,
+    target: &str,
+    host_ip: &str,
+    host_mac: Option<&str>,
+) -> bool {
+    legacy_ip(client)
+        .as_deref()
+        .map(|ip| ip == target || ip == host_ip)
+        .unwrap_or(false)
+        || client
+            .mac
+            .as_deref()
+            .map(|mac| {
+                mac_eq(mac, target) || host_mac.map(|host_mac| mac_eq(mac, host_mac)).unwrap_or(false)
+            })
+            .unwrap_or(false)
+}
+
+fn unifi_legacy_client_match_kind(
+    client: &LegacyClient,
+    target: &str,
+    host_ip: &str,
+    host_mac: Option<&str>,
+) -> Option<String> {
+    if legacy_ip(client)
+        .as_deref()
+        .map(|ip| ip == target || ip == host_ip)
+        .unwrap_or(false)
+    {
+        return Some("unifi-client-ip".to_string());
+    }
+    if client
+        .mac
+        .as_deref()
+        .map(|mac| {
+            mac_eq(mac, target) || host_mac.map(|host_mac| mac_eq(mac, host_mac)).unwrap_or(false)
+        })
+        .unwrap_or(false)
+    {
+        return Some("unifi-client-mac".to_string());
+    }
+    None
+}
+
+fn unifi_device_kind(bundle: &DeviceBundle) -> &'static str {
+    let model = bundle.list.model.as_deref().unwrap_or_default();
+    let features = &bundle.list.features;
+    let is_ap = features.iter().any(|f| f == "accessPoint");
+    if model.contains("UCG")
+        || model.contains("UDM")
+        || model.contains("UXG")
+        || model.contains("UDR")
+    {
+        "Gateway"
+    } else if is_ap {
+        "Access Point"
+    } else if model.contains("UPS") {
+        "UPS"
+    } else {
+        "Switch"
+    }
+}
+
+fn unifi_port(device: &DeviceBundle, port_idx: Option<u32>) -> Option<&crate::unifi::Port> {
+    let idx = port_idx?;
+    device
+        .detail
+        .interfaces
+        .as_ref()?
+        .ports
+        .iter()
+        .find(|p| p.idx == idx)
+}
+
+fn merge_unifi_client(base: UniClient, detail: UniClient) -> UniClient {
+    let mut extra = base.extra;
+    extra.extend(detail.extra);
+    UniClient {
+        id: detail.id.or(base.id),
+        kind: detail.kind.or(base.kind),
+        mac_address: detail.mac_address.or(base.mac_address),
+        ip_address: detail.ip_address.or(base.ip_address),
+        name: detail.name.or(base.name),
+        hostname: detail.hostname.or(base.hostname),
+        display_name: detail.display_name.or(base.display_name),
+        network_name: detail.network_name.or(base.network_name),
+        ssid: detail.ssid.or(base.ssid),
+        connected_at: detail.connected_at.or(base.connected_at),
+        last_seen_at: detail.last_seen_at.or(base.last_seen_at),
+        uplink_device_id: detail.uplink_device_id.or(base.uplink_device_id),
+        uplink_device_name: detail.uplink_device_name.or(base.uplink_device_name),
+        uplink_port: detail.uplink_port.or(base.uplink_port),
+        uplink_port_name: detail.uplink_port_name.or(base.uplink_port_name),
+        rx_rate_bps: detail.rx_rate_bps.or(base.rx_rate_bps),
+        tx_rate_bps: detail.tx_rate_bps.or(base.tx_rate_bps),
+        rx_bytes: detail.rx_bytes.or(base.rx_bytes),
+        tx_bytes: detail.tx_bytes.or(base.tx_bytes),
+        signal: detail.signal.or(base.signal),
+        channel: detail.channel.or(base.channel),
+        vlan_id: detail.vlan_id.or(base.vlan_id),
+        extra,
+    }
+}
+
+fn client_client_id(client: &UniClient) -> Option<String> {
+    client
+        .id
+        .clone()
+        .or_else(|| extra_string(client, &["id", "_id", "clientId"]))
+        .or_else(|| client.mac_address.clone())
+        .or_else(|| extra_string(client, &["mac", "macAddress"]))
+}
+
+fn client_display_name(client: &UniClient) -> Option<String> {
+    client
+        .display_name
+        .clone()
+        .or_else(|| client.name.clone())
+        .or_else(|| client.hostname.clone())
+        .or_else(|| extra_string(client, &["displayName", "name", "hostname"]))
+}
+
+fn client_ip(client: &UniClient) -> Option<String> {
+    client
+        .ip_address
+        .clone()
+        .or_else(|| extra_string(client, &["ipAddress", "ip"]))
+}
+
+fn client_mac(client: &UniClient) -> Option<String> {
+    client
+        .mac_address
+        .clone()
+        .or_else(|| extra_string(client, &["macAddress", "mac"]))
+        .or_else(|| {
+            client_client_id(client).and_then(|id| {
+                if normalize_mac(&id).len() == 12 {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+        })
+}
+
+fn client_uplink_device_id(client: &UniClient) -> Option<String> {
+    client
+        .uplink_device_id
+        .clone()
+        .or_else(|| extra_string(client, &["uplinkDeviceId", "uplinkDeviceID"]))
+}
+
+fn client_uplink_port(client: &UniClient) -> Option<u32> {
+    client
+        .uplink_port
+        .or_else(|| extra_u32(client, &["uplinkPort", "portIdx", "swPort", "switchPort"]))
+}
+
+fn legacy_display_name(client: &LegacyClient) -> Option<String> {
+    client
+        .name
+        .clone()
+        .or_else(|| client.hostname.clone())
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn legacy_ip(client: &LegacyClient) -> Option<String> {
+    client
+        .ip
+        .clone()
+        .or_else(|| client.last_ip.clone())
+        .or_else(|| client.fixed_ip.clone())
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn legacy_network_name(client: &LegacyClient) -> Option<String> {
+    client
+        .network
+        .clone()
+        .or_else(|| client.last_connection_network_name.clone())
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn legacy_vlan(client: &LegacyClient) -> Option<u32> {
+    client.vlan.or(client.gw_vlan)
+}
+
+fn extra_string(client: &UniClient, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| client.extra.get(*key))
+        .filter_map(value_string)
+        .next()
+}
+
+fn extra_u64(client: &UniClient, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .filter_map(|key| client.extra.get(*key))
+        .filter_map(value_u64)
+        .next()
+}
+
+fn extra_u32(client: &UniClient, keys: &[&str]) -> Option<u32> {
+    extra_u64(client, keys).and_then(|v| u32::try_from(v).ok())
+}
+
+fn extra_i64(client: &UniClient, keys: &[&str]) -> Option<i64> {
+    keys.iter()
+        .filter_map(|key| client.extra.get(*key))
+        .filter_map(value_i64)
+        .next()
+}
+
+fn value_string(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) if !s.trim().is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn value_u64(v: &serde_json::Value) -> Option<u64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+fn value_i64(v: &serde_json::Value) -> Option<i64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+fn rate_to_mbps(rate: u64) -> f64 {
+    ((rate as f64 * 8.0 / 1_000_000.0) * 100.0).round() / 100.0
+}
+
+fn bytes_per_sec_to_mbps(rate: f64) -> f64 {
+    ((rate * 8.0 / 1_000_000.0) * 100.0).round() / 100.0
+}
+
+fn epoch_to_rfc3339(value: i64) -> String {
+    chrono::DateTime::from_timestamp(value, 0)
+        .unwrap_or_default()
+        .to_rfc3339()
+}
+
+fn mac_eq(a: &str, b: &str) -> bool {
+    let a = normalize_mac(a);
+    let b = normalize_mac(b);
+    a.len() == 12 && b.len() == 12 && a == b
+}
+
+fn normalize_mac(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -538,6 +1492,28 @@ async fn cancel_network_scan(
         return Err(bad_request("only queued network scan jobs can be canceled"));
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+async fn start_host_port_scan(
+    State(state): State<Arc<AppState>>,
+    Path(target): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let target = target.trim().to_string();
+    if target.is_empty() {
+        return Err(bad_request("host target is required"));
+    }
+    let mut scanner = state.config().network_scanner.clone();
+    scanner.enabled = true;
+    scanner.ranges = vec![target];
+    scanner.exclude.clear();
+    scanner.port_scan.enabled = true;
+    scanner.port_scan.only_scan_discovered = false;
+    scanner.port_scan.skip_host_discovery = true;
+    scanner.schedule.enabled = false;
+    let value = settings_to_value(&scanner)
+        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
+    let id = db::enqueue_network_scan_job(&state.pool, "host-port-scan", &value).await?;
+    Ok(Json(json!({ "id": id })))
 }
 
 // ── Sources ─────────────────────────────────────────────────────────────────

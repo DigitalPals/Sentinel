@@ -58,7 +58,10 @@ export function Sidebar({
       {items.map((it) => (
         <button
           key={it.id}
-          className={"nav-item" + (page === it.id ? " active" : "")}
+          className={
+            "nav-item" +
+            (page === it.id || (page === "network-host" && it.id === "network-scanner") ? " active" : "")
+          }
           onClick={() => go(it.id)}
           title={it.label}
         >

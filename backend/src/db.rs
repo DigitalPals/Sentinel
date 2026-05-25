@@ -595,6 +595,43 @@ pub async fn network_scan_inventory(pool: &PgPool) -> anyhow::Result<Vec<Network
     .context("loading network scan inventory")
 }
 
+pub async fn network_scan_inventory_host(
+    pool: &PgPool,
+    target: &str,
+) -> anyhow::Result<Option<NetworkScanDeviceRow>> {
+    sqlx::query_as::<_, NetworkScanDeviceRow>(
+        "SELECT 0::bigint AS id, last_job_id AS job_id, ip, hostname, mac, vendor, status, \
+                discovery_method, latency_ms, ports, os_guess, first_seen, last_seen \
+         FROM network_scan_inventory \
+         WHERE ip = $1 OR lower(mac) = lower($1) \
+         LIMIT 1",
+    )
+    .bind(target)
+    .fetch_optional(pool)
+    .await
+    .with_context(|| format!("loading network scan inventory host {target}"))
+}
+
+pub async fn network_scan_host_observations(
+    pool: &PgPool,
+    target: &str,
+    limit: i64,
+) -> anyhow::Result<Vec<NetworkScanDeviceRow>> {
+    sqlx::query_as::<_, NetworkScanDeviceRow>(
+        "SELECT id, job_id, ip, hostname, mac, vendor, status, discovery_method, latency_ms, \
+                ports, os_guess, NULL::timestamptz AS first_seen, last_seen \
+         FROM network_scan_devices \
+         WHERE ip = $1 OR lower(mac) = lower($1) \
+         ORDER BY last_seen DESC, job_id DESC \
+         LIMIT $2",
+    )
+    .bind(target)
+    .bind(limit.max(1))
+    .fetch_all(pool)
+    .await
+    .with_context(|| format!("loading network scan observations for {target}"))
+}
+
 pub async fn insert_network_scan_devices(
     pool: &PgPool,
     job_id: i64,

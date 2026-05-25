@@ -512,6 +512,78 @@ export interface NetworkScanDevice {
   lastSeen: string;
 }
 
+export interface NetworkHostTraffic {
+  txMbps: number | null;
+  rxMbps: number | null;
+  txBytes: number | null;
+  rxBytes: number | null;
+}
+
+export interface NetworkHostUnifiDevice {
+  id: string;
+  name: string;
+  kind: string;
+  model: string;
+  ip: string;
+  mac: string;
+  state: string;
+  site: string;
+  txMbps: number;
+  rxMbps: number;
+  clients: number;
+  cpu: number;
+  mem: number;
+  firmware: string;
+}
+
+export interface NetworkHostUnifiClient {
+  id: string | null;
+  name: string | null;
+  kind: string | null;
+  ip: string | null;
+  mac: string | null;
+  networkName: string | null;
+  ssid: string | null;
+  connectedAt: string | null;
+  lastSeenAt: string | null;
+  signal: number | null;
+  channel: number | null;
+  vlanId: number | null;
+}
+
+export interface NetworkHostConnection {
+  connectionType: string;
+  uplinkDevice: NetworkHostUnifiDevice | null;
+  uplinkDeviceId: string | null;
+  uplinkDeviceName: string | null;
+  portIdx: number | null;
+  portName: string | null;
+  portState: string | null;
+  portSpeedMbps: number | null;
+  poe: boolean | null;
+}
+
+export interface NetworkHostUnifi {
+  configured: boolean;
+  site: string | null;
+  appVersion: string | null;
+  matchedBy: string | null;
+  client: NetworkHostUnifiClient | null;
+  device: NetworkHostUnifiDevice | null;
+  connection: NetworkHostConnection | null;
+  traffic: NetworkHostTraffic | null;
+  error: string | null;
+}
+
+export interface NetworkHostDetail {
+  target: string;
+  settings: NetworkScannerSettings;
+  activeJob: NetworkScanJob | null;
+  host: NetworkScanDevice | null;
+  observations: NetworkScanDevice[];
+  unifi: NetworkHostUnifi | null;
+}
+
 export interface NetworkScannerOverview {
   settings: NetworkScannerSettings;
   activeJob: NetworkScanJob | null;

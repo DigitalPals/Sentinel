@@ -2204,11 +2204,17 @@ html.is-scrolling * { scrollbar-color: var(--line-2) transparent; }
 .network-device-row {
   padding: 11px 14px;
   border-bottom: 1px solid var(--line);
+  cursor: pointer;
 }
 .network-device-row:last-child {
   border-bottom: 0;
 }
 .network-device-row:hover {
+  background: var(--surf-1);
+}
+.network-device-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
   background: var(--surf-1);
 }
 .network-ip {
@@ -2268,6 +2274,157 @@ html.is-scrolling * { scrollbar-color: var(--line-2) transparent; }
   color: var(--fg-3);
   font-size: 12px;
 }
+.network-host-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.network-host-title {
+  min-width: min(100%, 280px);
+  flex: 1;
+}
+.network-host-title h2 {
+  margin: 1px 0 3px;
+  font-size: 22px;
+  line-height: 1.15;
+  letter-spacing: 0;
+  color: var(--fg);
+}
+.network-host-sub {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+.network-kpi-date {
+  font-size: 18px;
+  line-height: 1.15;
+}
+.network-host-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.network-unifi-block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.network-unifi-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.network-unifi-device,
+.network-connection {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-1);
+}
+.network-flow-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.network-port-table {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.network-port-head,
+.network-port-row {
+  display: grid;
+  grid-template-columns: 80px 90px minmax(0, 1fr) 90px;
+  gap: 12px;
+  align-items: center;
+}
+.network-port-head {
+  padding: 10px 14px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.network-port-row {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--fg-1);
+}
+.network-port-row:last-child {
+  border-bottom: 0;
+}
+.network-history-list {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.network-history-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.network-history-row:last-child {
+  border-bottom: 0;
+}
+.network-history-ports {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.network-skeleton {
+  display: block;
+  height: 12px;
+  width: 100%;
+  max-width: 240px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--surf-1) 0%,
+    var(--surf-2) 42%,
+    var(--surf-1) 84%
+  );
+  background-size: 220% 100%;
+  animation: network-skeleton-pulse 1.1s ease-in-out infinite;
+}
+.network-skeleton.short {
+  max-width: 130px;
+}
+.network-skel-line {
+  margin-top: 5px;
+}
+.network-skel-chip {
+  width: 92px;
+  height: 24px;
+  border-radius: 999px;
+}
+.network-skel-chip.short {
+  width: 64px;
+}
+.network-skel-kpi {
+  width: 104px;
+  height: 21px;
+  margin-top: 7px;
+}
+.network-skel-sub {
+  width: 150px;
+  height: 10px;
+  margin-top: 9px;
+}
+@keyframes network-skeleton-pulse {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
 
 @media (max-width: 720px) {
   .network-toolbar {
@@ -2279,6 +2436,26 @@ html.is-scrolling * { scrollbar-color: var(--line-2) transparent; }
   }
   .network-kpis {
     grid-template-columns: 1fr;
+  }
+  .network-host-bar .set-btn {
+    flex: 1;
+    justify-content: center;
+  }
+  .network-host-title {
+    flex-basis: 100%;
+    order: -1;
+  }
+  .network-host-detail-grid,
+  .network-flow-grid,
+  .network-port-head,
+  .network-port-row {
+    grid-template-columns: 1fr;
+  }
+  .network-port-head {
+    display: none;
+  }
+  .network-port-row {
+    gap: 5px;
   }
 }
 

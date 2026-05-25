@@ -283,6 +283,8 @@ mod tests {
     #[test]
     fn offline_unifi_device_generates_critical_alert_and_event() {
         let data = UnifiData {
+            site_id: "site1".to_string(),
+            site_reference: "default".to_string(),
             site: "default".to_string(),
             app_version: "9.0".to_string(),
             clients: Vec::new(),

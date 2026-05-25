@@ -65,7 +65,13 @@ function compareIp(a: NetworkScanDevice, b: NetworkScanDevice): number {
   return a.ip.localeCompare(b.ip);
 }
 
-export default function NetworkScanner({ onConfigure }: { onConfigure: () => void }) {
+export default function NetworkScanner({
+  onConfigure,
+  onOpenHost,
+}: {
+  onConfigure: () => void;
+  onOpenHost: (target: string) => void;
+}) {
   const [data, setData] = React.useState<NetworkScannerOverview | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
@@ -259,7 +265,19 @@ export default function NetworkScanner({ onConfigure }: { onConfigure: () => voi
             <div className="network-empty">No devices found.</div>
           )}
           {filtered.map((d) => (
-            <div className="network-device-row" key={`${view}-${d.ip}`}>
+            <div
+              className="network-device-row"
+              key={`${view}-${d.ip}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpenHost(d.ip)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onOpenHost(d.ip);
+                }
+              }}
+            >
               <div className="network-ip">
                 <span className={"status-dot " + statusTone(d.status)} />
                 <span>{d.ip}</span>
