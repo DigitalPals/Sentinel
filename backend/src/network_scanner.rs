@@ -147,18 +147,13 @@ fn default_min_rate() -> u32 {
     5_000
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum DiscoveryMethod {
+    #[default]
     Auto,
     Arp,
     IcmpTcp,
-}
-
-impl Default for DiscoveryMethod {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,32 +207,22 @@ fn default_skip_host_discovery() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PortProfile {
+    #[default]
     Fast,
     Top100,
     Top1000,
     Custom,
 }
 
-impl Default for PortProfile {
-    fn default() -> Self {
-        Self::Fast
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PortScanTechnique {
+    #[default]
     Syn,
     Connect,
-}
-
-impl Default for PortScanTechnique {
-    fn default() -> Self {
-        Self::Syn
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -254,6 +254,7 @@ struct LegacyClientEnvelope {
 }
 
 /// Everything gathered about one device in a single poll.
+#[derive(Debug, Clone)]
 pub struct DeviceBundle {
     pub list: DeviceListItem,
     pub detail: DeviceDetail,
@@ -261,6 +262,7 @@ pub struct DeviceBundle {
 }
 
 /// Result of one full UniFi poll.
+#[derive(Debug, Clone)]
 pub struct UnifiData {
     pub site_id: String,
     pub site_reference: String,
@@ -363,7 +365,7 @@ impl UnifiClient {
             .unwrap_or_default();
 
         // Detail + statistics for every device, fetched with bounded concurrency.
-        let devices: Vec<DeviceBundle> = stream::iter(list.into_iter())
+        let devices: Vec<DeviceBundle> = stream::iter(list)
             .map(|item| {
                 let this = self.clone();
                 let site_id = site.id.clone();
@@ -477,7 +479,10 @@ mod tests {
         assert_eq!(client.last_ip.as_deref(), Some("10.10.0.3"));
         assert_eq!(client.fixed_ip.as_deref(), Some("10.10.0.3"));
         assert_eq!(client.network.as_deref(), Some("Default"));
-        assert_eq!(client.last_connection_network_name.as_deref(), Some("Default"));
+        assert_eq!(
+            client.last_connection_network_name.as_deref(),
+            Some("Default")
+        );
         assert_eq!(client.gw_vlan, Some(1));
         assert_eq!(client.last_uplink_name.as_deref(), Some("Schuilstal"));
         assert_eq!(client.sw_mac.as_deref(), Some("24:5a:4c:15:dd:5b"));

@@ -1,17 +1,22 @@
 //! HTTP surface: the JSON API plus the bundled single-page frontend.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     middleware,
-    response::{Html, IntoResponse, Response},
+    response::{
+        sse::{Event as SseEvent, KeepAlive, Sse},
+        Html, IntoResponse, Response,
+    },
     routing::{get, post, put},
     Json, Router,
 };
+use futures::{stream, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio_stream::wrappers::BroadcastStream;
 use tower_http::{
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
@@ -44,6 +49,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     // Everything else requires a valid login session.
     let protected = Router::new()
         .route("/api/snapshot", get(snapshot))
+        .route("/api/stream", get(snapshot_stream))
         .route("/api/health", get(health))
         .route("/api/alerts/action", post(alert_action))
         .route("/api/settings", get(get_settings).put(put_settings))
@@ -150,6 +156,35 @@ async fn refresh_config(state: &AppState) -> Result<(), ApiError> {
 /// The full monitoring snapshot consumed by the frontend.
 async fn snapshot(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(state.current())
+}
+
+/// Server-sent snapshot stream. Clients receive the current snapshot
+/// immediately, then every freshly published poll result.
+async fn snapshot_stream(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+    let initial = state.current();
+    let updates =
+        BroadcastStream::new(state.snapshot_tx.subscribe()).filter_map(|msg| async move {
+            match msg {
+                Ok(snapshot) => Some(snapshot_sse_event(snapshot)),
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => {
+                    Some(Ok(SseEvent::default().event("sync").data("lagged")))
+                }
+            }
+        });
+    let stream = stream::once(async move { snapshot_sse_event(initial) }).chain(updates);
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("keepalive"),
+    )
+}
+
+fn snapshot_sse_event(snapshot: Arc<crate::model::Snapshot>) -> Result<SseEvent, Infallible> {
+    let data = serde_json::to_string(&*snapshot)
+        .unwrap_or_else(|e| json!({ "error": format!("serializing snapshot: {e}") }).to_string());
+    Ok(SseEvent::default().event("snapshot").data(data))
 }
 
 /// Source connectivity summary.
@@ -275,7 +310,10 @@ async fn put_settings(
             notify::ensure_push_vapid(&mut notifications)
                 .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
         }
-        let value = serde_json::to_value(notifications).map_err(|e| anyhow::anyhow!(e))?;
+        let mut stored = notifications.clone();
+        crate::secret::seal_notifications(&mut stored)
+            .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
+        let value = serde_json::to_value(stored).map_err(|e| anyhow::anyhow!(e))?;
         db::set_setting(pool, "notifications", &value).await?;
     }
     if let Some(v) = req.network_scanner {
@@ -328,7 +366,10 @@ async fn ensure_push_config(
     if notifications.push.vapid_private_key.trim().is_empty() {
         notify::ensure_push_vapid(&mut notifications)
             .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
-        let value = serde_json::to_value(&notifications).map_err(|e| anyhow::anyhow!(e))?;
+        let mut stored = notifications.clone();
+        crate::secret::seal_notifications(&mut stored)
+            .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
+        let value = serde_json::to_value(&stored).map_err(|e| anyhow::anyhow!(e))?;
         db::set_setting(&state.pool, "notifications", &value).await?;
         refresh_config(state).await?;
         notifications = state.config().notifications.clone();
@@ -765,12 +806,7 @@ async fn build_unifi_host_detail(
     let connection = if let Some(device) = matched_device {
         unifi_device_connection(device, &devices_by_id, &clients_per_device, &data.site)
     } else if let Some(legacy) = legacy_match.as_ref() {
-        unifi_legacy_client_connection(
-            legacy,
-            &data.devices,
-            &clients_per_device,
-            &data.site,
-        )
+        unifi_legacy_client_connection(legacy, &data.devices, &clients_per_device, &data.site)
     } else {
         matched_client
             .as_ref()
@@ -942,7 +978,10 @@ fn unifi_legacy_client_connection(
     clients_per_device: &HashMap<String, u32>,
     site: &str,
 ) -> Option<NetworkHostConnectionOut> {
-    let switch_mac = client.sw_mac.as_deref().or(client.last_uplink_mac.as_deref());
+    let switch_mac = client
+        .sw_mac
+        .as_deref()
+        .or(client.last_uplink_mac.as_deref());
     let uplink = switch_mac.and_then(|mac| {
         devices.iter().find(|d| {
             d.list
@@ -972,9 +1011,7 @@ fn unifi_legacy_client_connection(
         port_idx,
         port_name: port_idx.map(|idx| format!("Port {idx}")),
         port_state: port.and_then(|p| p.state.clone()),
-        port_speed_mbps: port
-            .and_then(|p| p.speed_mbps)
-            .or(client.wired_rate_mbps),
+        port_speed_mbps: port.and_then(|p| p.speed_mbps).or(client.wired_rate_mbps),
         poe: port.and_then(|p| p.poe.as_ref().map(|poe| poe.enabled)),
     })
 }
@@ -1204,7 +1241,10 @@ fn unifi_legacy_client_matches(
             .mac
             .as_deref()
             .map(|mac| {
-                mac_eq(mac, target) || host_mac.map(|host_mac| mac_eq(mac, host_mac)).unwrap_or(false)
+                mac_eq(mac, target)
+                    || host_mac
+                        .map(|host_mac| mac_eq(mac, host_mac))
+                        .unwrap_or(false)
             })
             .unwrap_or(false)
 }
@@ -1226,7 +1266,10 @@ fn unifi_legacy_client_match_kind(
         .mac
         .as_deref()
         .map(|mac| {
-            mac_eq(mac, target) || host_mac.map(|host_mac| mac_eq(mac, host_mac)).unwrap_or(false)
+            mac_eq(mac, target)
+                || host_mac
+                    .map(|host_mac| mac_eq(mac, host_mac))
+                    .unwrap_or(false)
         })
         .unwrap_or(false)
     {

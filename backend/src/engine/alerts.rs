@@ -72,6 +72,8 @@ impl AlertStore {
             // backend was down.
             let persisted_continuation = meta.loaded_from_db && !meta.present_before;
             let became_present = !meta.present_before && !persisted_continuation;
+            let suppressed_flap =
+                became_present && meta.occurrences > 0 && now - meta.last_seen < 30;
             if became_present {
                 meta.occurrences += 1;
                 if meta.status != "open" {
@@ -96,7 +98,7 @@ impl AlertStore {
                 assignee: meta.assignee.clone(),
                 rule: c.rule.clone(),
             };
-            if became_present {
+            if became_present && !suppressed_flap {
                 newly_active.push(alert.clone());
             }
             if alert.status != "resolved" {
@@ -219,7 +221,9 @@ pub fn patch_alerts(state: &AppState) {
     if let Some(k) = next.dashboard.kpis.get_mut(2) {
         *k = dashboard_alert_kpi;
     }
-    *state.snapshot.write().unwrap() = Arc::new(next);
+    let next = Arc::new(next);
+    *state.snapshot.write().unwrap() = next.clone();
+    let _ = state.snapshot_tx.send(next);
 }
 
 pub(super) fn sev_rank(sev: &str) -> u8 {

@@ -54,11 +54,11 @@ said that number out loud over HTTP.
   file hiding behind the first one. Just the database.
 
 ```
-┌─────────────┐   poll 15s    ┌──────────────────┐   HTTP/JSON   ┌──────────────┐
+┌─────────────┐   poll 15s    ┌──────────────────┐   HTTP/SSE    ┌──────────────┐
 │ Proxmox VE  │ ◀──────────── │  Rust backend    │ ◀──────────── │  React SPA   │
 │ UniFi Net.  │ ◀──────────── │  (axum poller)   │ ──────────────▶  (Bun build) │
 │ Unraid API  │ ◀──────────── │                  │               │              │
-└─────────────┘               └──────────────────┘   /api/...    └──────────────┘
+└─────────────┘               └──────────────────┘   /api/stream └──────────────┘
 ```
 
 ## Pages
@@ -128,10 +128,12 @@ intervals, alert thresholds, notification channels, UI preferences — lives in
 the database and is edited from the in-app **Settings** page. Changes take
 effect on the next poll cycle, no restart needed.
 
-The one exception is the database's own address, because the backend has to
-find the database before it can read its own settings (chicken / egg). That
-comes from the `DATABASE_URL` environment variable. The compose file sets it
-to `postgres://sentinel:sentinel@db:5432/sentinel`.
+The database address and secret-encryption key are the exceptions, because the
+backend needs both before it can read database-backed settings. `DATABASE_URL`
+points at PostgreSQL. `SENTINEL_SECRET_KEY` is strongly recommended for stable
+credential encryption; use a long random value or URL-safe 32-byte base64 key.
+If it is absent, Sentinel falls back to a local deterministic key and logs a
+warning.
 
 Self-signed certs on your Unraid/UniFi/Proxmox hosts are accepted automatically,
 because that is the reality of homelab gear.
@@ -163,8 +165,9 @@ Telegram setup:
 7. Enter the bot token and chat ID in **Settings -> Notifications -> Telegram**,
    save, then press **Test Telegram**.
 
-Notification secrets are stored in PostgreSQL and are masked in the API response
-after saving. Treat database backups the same way you treat source API keys.
+Notification secrets are encrypted before storage and masked in the API
+response after saving. Treat `SENTINEL_SECRET_KEY` the same way you treat source
+API keys.
 
 ## Data sources
 
@@ -190,10 +193,10 @@ after saving. Treat database backups the same way you treat source API keys.
 - The session cookie is `HttpOnly` and `SameSite=Lax`. It is **not** `Secure`
   by default (so plain-HTTP LAN deployments still work). If you put Sentinel
   behind TLS, set `SENTINEL_SECURE_COOKIES=1` on the backend.
-- Unraid/UniFi/Proxmox credentials are stored as plaintext columns in PostgreSQL —
-  same exposure as the old `config.toml` they replaced. Notification secrets
-  are stored in the same database-backed settings table. Treat the database
-  accordingly.
+- Unraid/UniFi/Proxmox credentials and notification secrets are encrypted at
+  rest before they are written to PostgreSQL. Set `SENTINEL_SECRET_KEY` before
+  relying on this for backups or cross-host restores; without it, the fallback
+  key is intended only for local convenience.
 
 ## Layout
 

@@ -15,6 +15,10 @@ export interface SourceHealth {
   name: string;
   kind: string;
   ok: boolean;
+  stale: boolean;
+  failureCount: number;
+  retryInSec: number | null;
+  lastOkAgoSec: number | null;
   detail: string;
   error: string | null;
 }

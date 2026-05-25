@@ -303,7 +303,7 @@ export function EditableGrid({
     const items = layoutRef.current.items.filter((item) => item.id !== id);
     const current = layoutRef.current.items.find((x) => x.id === id);
     if (!current) return;
-    let item = { ...current, hidden: false };
+    let item: EditableLayoutItem = { ...current, hidden: false };
     if (collides(item, items)) item = firstFreeSpot(item, items);
     persist({
       version: VERSION,

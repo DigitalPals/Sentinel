@@ -163,10 +163,14 @@ export function Topbar({
         {sources.map((s) => (
           <span
             key={s.name}
-            className={"src-pill " + (s.ok ? "ok" : "down")}
-            title={s.ok ? s.detail : s.error || "unreachable"}
+            className={"src-pill " + (s.ok ? "ok" : s.stale ? "stale" : "down")}
+            title={
+              s.stale
+                ? `${s.detail}${s.retryInSec ? ` · retry in ${s.retryInSec}s` : ""}`
+                : s.ok ? s.detail : s.error || "unreachable"
+            }
           >
-            <span className={"status-dot " + (s.ok ? "ok" : "crit")} />
+            <span className={"status-dot " + (s.ok ? "ok" : s.stale ? "warn" : "crit")} />
             {s.name}
           </span>
         ))}

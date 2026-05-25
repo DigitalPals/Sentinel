@@ -18,6 +18,8 @@ use sqlx::{FromRow, PgPool, Row};
 
 use crate::history::Sample;
 use crate::model::Event;
+use crate::notify::NotificationSettings;
+use crate::secret;
 
 /// Connection string used when `DATABASE_URL` is not set — matches the bundled
 /// `docker-compose.yml`, so the common case needs no environment variables.
@@ -143,6 +145,83 @@ pub async fn set_setting(
     Ok(())
 }
 
+/// Encrypt any legacy plaintext secrets already present in the database.
+pub async fn protect_existing_secrets(pool: &PgPool) -> anyhow::Result<()> {
+    let unifi = sqlx::query("SELECT id, api_key FROM unifi_sources")
+        .fetch_all(pool)
+        .await
+        .context("loading UniFi secrets for protection")?;
+    for row in unifi {
+        let id: i64 = row.get("id");
+        let api_key: String = row.get("api_key");
+        let sealed = secret::seal(&api_key)?;
+        if sealed != api_key {
+            sqlx::query("UPDATE unifi_sources SET api_key = $2, updated_at = now() WHERE id = $1")
+                .bind(id)
+                .bind(sealed)
+                .execute(pool)
+                .await
+                .context("protecting UniFi secret")?;
+        }
+    }
+
+    let proxmox = sqlx::query("SELECT id, token_secret FROM proxmox_sources")
+        .fetch_all(pool)
+        .await
+        .context("loading Proxmox secrets for protection")?;
+    for row in proxmox {
+        let id: i64 = row.get("id");
+        let token_secret: String = row.get("token_secret");
+        let sealed = secret::seal(&token_secret)?;
+        if sealed != token_secret {
+            sqlx::query(
+                "UPDATE proxmox_sources SET token_secret = $2, updated_at = now() WHERE id = $1",
+            )
+            .bind(id)
+            .bind(sealed)
+            .execute(pool)
+            .await
+            .context("protecting Proxmox secret")?;
+        }
+    }
+
+    let unraid = sqlx::query("SELECT id, api_key FROM unraid_sources")
+        .fetch_all(pool)
+        .await
+        .context("loading Unraid secrets for protection")?;
+    for row in unraid {
+        let id: i64 = row.get("id");
+        let api_key: String = row.get("api_key");
+        let sealed = secret::seal(&api_key)?;
+        if sealed != api_key {
+            sqlx::query("UPDATE unraid_sources SET api_key = $2, updated_at = now() WHERE id = $1")
+                .bind(id)
+                .bind(sealed)
+                .execute(pool)
+                .await
+                .context("protecting Unraid secret")?;
+        }
+    }
+
+    let notifications = sqlx::query("SELECT value FROM settings WHERE key = 'notifications'")
+        .fetch_optional(pool)
+        .await
+        .context("loading notification secrets for protection")?;
+    if let Some(row) = notifications {
+        let before: Value = row.get("value");
+        let mut settings: NotificationSettings =
+            serde_json::from_value(before.clone()).context("decoding notification settings")?;
+        secret::open_notifications(&mut settings)?;
+        secret::seal_notifications(&mut settings)?;
+        let after = serde_json::to_value(settings).context("encoding notification settings")?;
+        if after != before {
+            set_setting(pool, "notifications", &after).await?;
+        }
+    }
+
+    Ok(())
+}
+
 // ── Sources ─────────────────────────────────────────────────────────────────
 
 /// A configured UniFi source as stored in the database.
@@ -177,22 +256,30 @@ pub struct UnraidSourceRow {
 }
 
 pub async fn get_unifi_sources(pool: &PgPool) -> anyhow::Result<Vec<UnifiSourceRow>> {
-    sqlx::query_as::<_, UnifiSourceRow>(
+    let mut rows = sqlx::query_as::<_, UnifiSourceRow>(
         "SELECT id, name, host, api_key, enabled FROM unifi_sources ORDER BY id",
     )
     .fetch_all(pool)
     .await
-    .context("loading UniFi sources")
+    .context("loading UniFi sources")?;
+    for row in &mut rows {
+        row.api_key = secret::open(&row.api_key)?;
+    }
+    Ok(rows)
 }
 
 pub async fn get_unifi_source(pool: &PgPool, id: i64) -> anyhow::Result<Option<UnifiSourceRow>> {
-    sqlx::query_as::<_, UnifiSourceRow>(
+    let mut row = sqlx::query_as::<_, UnifiSourceRow>(
         "SELECT id, name, host, api_key, enabled FROM unifi_sources WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(pool)
     .await
-    .context("loading UniFi source")
+    .context("loading UniFi source")?;
+    if let Some(row) = &mut row {
+        row.api_key = secret::open(&row.api_key)?;
+    }
+    Ok(row)
 }
 
 pub async fn insert_unifi_source(
@@ -202,6 +289,7 @@ pub async fn insert_unifi_source(
     api_key: &str,
     enabled: bool,
 ) -> anyhow::Result<i64> {
+    let api_key = secret::seal(api_key)?;
     let row = sqlx::query(
         "INSERT INTO unifi_sources (name, host, api_key, enabled) \
          VALUES ($1, $2, $3, $4) RETURNING id",
@@ -224,6 +312,7 @@ pub async fn update_unifi_source(
     api_key: &str,
     enabled: bool,
 ) -> anyhow::Result<bool> {
+    let api_key = secret::seal(api_key)?;
     let res = sqlx::query(
         "UPDATE unifi_sources SET name = $2, host = $3, api_key = $4, enabled = $5, \
          updated_at = now() WHERE id = $1",
@@ -249,25 +338,33 @@ pub async fn delete_unifi_source(pool: &PgPool, id: i64) -> anyhow::Result<bool>
 }
 
 pub async fn get_proxmox_sources(pool: &PgPool) -> anyhow::Result<Vec<ProxmoxSourceRow>> {
-    sqlx::query_as::<_, ProxmoxSourceRow>(
+    let mut rows = sqlx::query_as::<_, ProxmoxSourceRow>(
         "SELECT id, name, host, token_id, token_secret, enabled FROM proxmox_sources ORDER BY id",
     )
     .fetch_all(pool)
     .await
-    .context("loading Proxmox sources")
+    .context("loading Proxmox sources")?;
+    for row in &mut rows {
+        row.token_secret = secret::open(&row.token_secret)?;
+    }
+    Ok(rows)
 }
 
 pub async fn get_proxmox_source(
     pool: &PgPool,
     id: i64,
 ) -> anyhow::Result<Option<ProxmoxSourceRow>> {
-    sqlx::query_as::<_, ProxmoxSourceRow>(
+    let mut row = sqlx::query_as::<_, ProxmoxSourceRow>(
         "SELECT id, name, host, token_id, token_secret, enabled FROM proxmox_sources WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(pool)
     .await
-    .context("loading Proxmox source")
+    .context("loading Proxmox source")?;
+    if let Some(row) = &mut row {
+        row.token_secret = secret::open(&row.token_secret)?;
+    }
+    Ok(row)
 }
 
 pub async fn insert_proxmox_source(
@@ -278,6 +375,7 @@ pub async fn insert_proxmox_source(
     token_secret: &str,
     enabled: bool,
 ) -> anyhow::Result<i64> {
+    let token_secret = secret::seal(token_secret)?;
     let row = sqlx::query(
         "INSERT INTO proxmox_sources (name, host, token_id, token_secret, enabled) \
          VALUES ($1, $2, $3, $4, $5) RETURNING id",
@@ -302,6 +400,7 @@ pub async fn update_proxmox_source(
     token_secret: &str,
     enabled: bool,
 ) -> anyhow::Result<bool> {
+    let token_secret = secret::seal(token_secret)?;
     let res = sqlx::query(
         "UPDATE proxmox_sources SET name = $2, host = $3, token_id = $4, token_secret = $5, \
          enabled = $6, updated_at = now() WHERE id = $1",
@@ -328,22 +427,30 @@ pub async fn delete_proxmox_source(pool: &PgPool, id: i64) -> anyhow::Result<boo
 }
 
 pub async fn get_unraid_sources(pool: &PgPool) -> anyhow::Result<Vec<UnraidSourceRow>> {
-    sqlx::query_as::<_, UnraidSourceRow>(
+    let mut rows = sqlx::query_as::<_, UnraidSourceRow>(
         "SELECT id, name, host, api_key, enabled FROM unraid_sources ORDER BY id",
     )
     .fetch_all(pool)
     .await
-    .context("loading Unraid sources")
+    .context("loading Unraid sources")?;
+    for row in &mut rows {
+        row.api_key = secret::open(&row.api_key)?;
+    }
+    Ok(rows)
 }
 
 pub async fn get_unraid_source(pool: &PgPool, id: i64) -> anyhow::Result<Option<UnraidSourceRow>> {
-    sqlx::query_as::<_, UnraidSourceRow>(
+    let mut row = sqlx::query_as::<_, UnraidSourceRow>(
         "SELECT id, name, host, api_key, enabled FROM unraid_sources WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(pool)
     .await
-    .context("loading Unraid source")
+    .context("loading Unraid source")?;
+    if let Some(row) = &mut row {
+        row.api_key = secret::open(&row.api_key)?;
+    }
+    Ok(row)
 }
 
 pub async fn insert_unraid_source(
@@ -353,6 +460,7 @@ pub async fn insert_unraid_source(
     api_key: &str,
     enabled: bool,
 ) -> anyhow::Result<i64> {
+    let api_key = secret::seal(api_key)?;
     let row = sqlx::query(
         "INSERT INTO unraid_sources (name, host, api_key, enabled) \
          VALUES ($1, $2, $3, $4) RETURNING id",
@@ -375,6 +483,7 @@ pub async fn update_unraid_source(
     api_key: &str,
     enabled: bool,
 ) -> anyhow::Result<bool> {
+    let api_key = secret::seal(api_key)?;
     let res = sqlx::query(
         "UPDATE unraid_sources SET name = $2, host = $3, api_key = $4, enabled = $5, \
          updated_at = now() WHERE id = $1",

@@ -119,13 +119,52 @@ export function useSnapshot(): SnapshotState {
   }, []);
 
   useEffect(() => {
-    fetchSnapshot();
-    const poll = setInterval(fetchSnapshot, pollMs);
+    let poll: number | undefined;
+    let stream: EventSource | null = null;
+
+    const startPollingFallback = () => {
+      if (poll) return;
+      fetchSnapshot();
+      poll = window.setInterval(fetchSnapshot, pollMs);
+    };
+    const stopPollingFallback = () => {
+      if (!poll) return;
+      window.clearInterval(poll);
+      poll = undefined;
+    };
+
+    if (typeof EventSource === "undefined") {
+      startPollingFallback();
+    } else {
+      stream = new EventSource("/api/stream");
+      stream.addEventListener("snapshot", (ev) => {
+        try {
+          const data: Snapshot = JSON.parse((ev as MessageEvent).data);
+          if (!data.generatedAt) return;
+          setSnap(data);
+          setError(null);
+          lastOk.current = Date.now();
+          stopPollingFallback();
+        } catch (e: any) {
+          setError(String(e?.message ?? e));
+          startPollingFallback();
+        }
+      });
+      stream.addEventListener("sync", () => {
+        fetchSnapshot();
+      });
+      stream.onerror = () => {
+        setError("Live stream disconnected; polling fallback active");
+        startPollingFallback();
+      };
+    }
+
     const tick = setInterval(() => {
       setStaleSec(lastOk.current ? Math.floor((Date.now() - lastOk.current) / 1000) : 0);
     }, 1000);
     return () => {
-      clearInterval(poll);
+      stream?.close();
+      stopPollingFallback();
       clearInterval(tick);
     };
   }, [fetchSnapshot, pollMs]);

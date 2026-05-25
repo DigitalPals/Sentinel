@@ -96,6 +96,7 @@ pub struct PveClusterStatus {
 }
 
 /// Result of probing a single Proxmox host.
+#[derive(Debug, Clone)]
 pub struct ProxmoxData {
     pub server: String,
     pub release: String,
@@ -154,17 +155,16 @@ impl ProxmoxClient {
             .get_json("/cluster/resources")
             .await
             .context("/cluster/resources")?;
-        let cluster_status: Vec<PveClusterStatus> =
-            match self.get_json("/cluster/status").await {
-                Ok(status) => status,
-                Err(e) => {
-                    tracing::warn!(
-                        "could not read Proxmox cluster status for '{}': {e:#}",
-                        self.name
-                    );
-                    Vec::new()
-                }
-            };
+        let cluster_status: Vec<PveClusterStatus> = match self.get_json("/cluster/status").await {
+            Ok(status) => status,
+            Err(e) => {
+                tracing::warn!(
+                    "could not read Proxmox cluster status for '{}': {e:#}",
+                    self.name
+                );
+                Vec::new()
+            }
+        };
 
         let node_names: Vec<String> = resources
             .iter()

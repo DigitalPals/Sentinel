@@ -169,6 +169,10 @@ impl RuntimeConfig {
             })
             .collect();
 
+        let mut notifications: NotificationSettings =
+            setting(&map, "notifications", NotificationSettings::default());
+        crate::secret::open_notifications(&mut notifications)?;
+
         Ok(Self {
             poll_interval_sec: setting(&map, "poll_interval_sec", 15),
             bind: setting(&map, "bind", "0.0.0.0:8787".to_string()),
@@ -178,7 +182,7 @@ impl RuntimeConfig {
             frontend_poll_ms: setting(&map, "frontend_poll_ms", 5000),
             thresholds: setting(&map, "alert_thresholds", AlertThresholds::default()),
             ui_prefs: setting(&map, "ui_prefs", UiPrefs::default()),
-            notifications: setting(&map, "notifications", NotificationSettings::default()),
+            notifications,
             network_scanner: setting(
                 &map,
                 crate::network_scanner::SETTINGS_KEY,

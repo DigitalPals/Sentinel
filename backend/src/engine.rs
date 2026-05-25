@@ -13,11 +13,13 @@ mod topology;
 mod unifi_view;
 mod unraid_view;
 
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use sqlx::PgPool;
+use tokio::sync::broadcast;
 
 pub use alerts::{patch_alerts, AlertStore};
 
@@ -45,6 +47,69 @@ pub struct Clients {
     pub unifi: Option<UnifiClient>,
     /// `RuntimeConfig::source_sig` of the config these were built from.
     pub source_sig: u64,
+}
+
+#[derive(Default)]
+pub struct SourceRuntime {
+    entries: HashMap<String, SourceRuntimeEntry>,
+    proxmox_last: HashMap<String, ProxmoxData>,
+    unraid_last: HashMap<String, UnraidData>,
+    unifi_last: Option<UnifiData>,
+}
+
+#[derive(Default)]
+struct SourceRuntimeEntry {
+    failure_count: u32,
+    last_ok: Option<i64>,
+    next_retry: i64,
+    last_error: Option<String>,
+}
+
+impl SourceRuntime {
+    fn retry_in(&self, key: &str, now: i64) -> Option<u64> {
+        let entry = self.entries.get(key)?;
+        (entry.next_retry > now).then_some((entry.next_retry - now) as u64)
+    }
+
+    fn record_success(&mut self, key: &str, now: i64) {
+        let entry = self.entries.entry(key.to_string()).or_default();
+        entry.failure_count = 0;
+        entry.last_ok = Some(now);
+        entry.next_retry = 0;
+        entry.last_error = None;
+    }
+
+    fn record_failure(&mut self, key: &str, error: String, now: i64) {
+        let entry = self.entries.entry(key.to_string()).or_default();
+        entry.failure_count = entry.failure_count.saturating_add(1);
+        let exp = entry.failure_count.saturating_sub(1).min(6);
+        let backoff = (5u64.saturating_mul(2u64.saturating_pow(exp))).min(300);
+        entry.next_retry = now + backoff as i64;
+        entry.last_error = Some(error);
+    }
+
+    fn annotate_sources(&self, sources: &mut [SourceHealth], now: i64) {
+        for source in sources {
+            let key = source_key(&source.kind, &source.name);
+            let Some(entry) = self.entries.get(&key) else {
+                continue;
+            };
+            source.failure_count = entry.failure_count;
+            source.retry_in_sec =
+                (entry.next_retry > now).then_some((entry.next_retry - now) as u64);
+            source.last_ok_ago_sec = entry.last_ok.map(|ts| now.saturating_sub(ts) as u64);
+            if entry.failure_count > 0 && entry.last_ok.is_some() {
+                source.ok = false;
+                source.stale = true;
+                source.detail = "showing last known good data".to_string();
+                source.error = entry.last_error.clone();
+            }
+        }
+    }
+}
+
+fn source_key(kind: &str, name: &str) -> String {
+    format!("{kind}:{name}")
 }
 
 /// Build the Proxmox/UniFi HTTP clients for `cfg`. A source that fails to build
@@ -89,7 +154,9 @@ pub struct AppState {
     pub config: RwLock<Arc<RuntimeConfig>>,
     /// HTTP clients, rebuilt when the source set changes.
     pub clients: RwLock<Clients>,
+    pub source_runtime: RwLock<SourceRuntime>,
     pub snapshot: RwLock<Arc<Snapshot>>,
+    pub snapshot_tx: broadcast::Sender<Arc<Snapshot>>,
     pub history: RwLock<History>,
     pub alerts: RwLock<AlertStore>,
 }
@@ -154,21 +221,18 @@ async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
     };
 
     // Query Proxmox hosts and UniFi concurrently.
-    let pmx_futs = proxmox.iter().map(|c| async move {
-        (
-            c.name.clone(),
-            c.collect().await.map_err(|e| format!("{e:#}")),
-        )
+    let pmx_futs = proxmox.iter().map(|c| {
+        let state = state.clone();
+        async move { collect_proxmox(c, &state).await }
     });
-    let unraid_futs = unraid.iter().map(|c| async move {
-        (
-            c.name.clone(),
-            c.collect().await.map_err(|e| format!("{e:#}")),
-        )
+    let unraid_futs = unraid.iter().map(|c| {
+        let state = state.clone();
+        async move { collect_unraid(c, &state).await }
     });
+    let state_for_unifi = state.clone();
     let unifi_fut = async {
         match &unifi {
-            Some(c) => Some(c.collect().await.map_err(|e| format!("{e:#}"))),
+            Some(c) => Some(collect_unifi(c, &state_for_unifi).await),
             None => None,
         }
     };
@@ -183,6 +247,11 @@ async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
         let mut store = state.alerts.write().unwrap();
         build(cfg, &pmx, &unraid_res, &unifi_res, &mut history, &mut store)
     };
+    state
+        .source_runtime
+        .read()
+        .unwrap()
+        .annotate_sources(&mut snapshot.sources, Utc::now().timestamp());
 
     // Persist the new sample to the time-series table and the reconciled alert
     // workflow state; failures are logged but never fatal.
@@ -204,7 +273,6 @@ async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
             Err(e) => tracing::warn!("could not load persisted event logs: {e:#}"),
         }
     }
-
     let ok_sources = snapshot.sources.iter().filter(|s| s.ok).count();
     tracing::info!(
         "poll complete — {ok_sources}/{} sources up, {} alerts, {} events",
@@ -213,13 +281,124 @@ async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
         snapshot.events.events.len(),
     );
 
-    *state.snapshot.write().unwrap() = Arc::new(snapshot);
+    let snapshot = Arc::new(snapshot);
+    *state.snapshot.write().unwrap() = snapshot.clone();
+    let _ = state.snapshot_tx.send(snapshot);
 
     if !notifications.is_empty() {
         if let Err(e) =
             notify::send_alert_notifications(&state.pool, &cfg.notifications, &notifications).await
         {
             tracing::warn!("could not send alert notification(s): {e:#}");
+        }
+    }
+}
+
+async fn collect_proxmox(
+    client: &ProxmoxClient,
+    state: &Arc<AppState>,
+) -> (String, Result<ProxmoxData, String>) {
+    let name = client.name.clone();
+    let key = source_key("proxmox", &name);
+    let now = Utc::now().timestamp();
+    if let Some(retry) = state.source_runtime.read().unwrap().retry_in(&key, now) {
+        if let Some(data) = state
+            .source_runtime
+            .read()
+            .unwrap()
+            .proxmox_last
+            .get(&key)
+            .cloned()
+        {
+            return (name, Ok(data));
+        }
+        return (name, Err(format!("backing off; retry in {retry}s")));
+    }
+    match client.collect().await {
+        Ok(data) => {
+            let mut runtime = state.source_runtime.write().unwrap();
+            runtime.record_success(&key, now);
+            runtime.proxmox_last.insert(key, data.clone());
+            (name, Ok(data))
+        }
+        Err(e) => {
+            let error = format!("{e:#}");
+            let mut runtime = state.source_runtime.write().unwrap();
+            runtime.record_failure(&key, error.clone(), now);
+            if let Some(data) = runtime.proxmox_last.get(&key).cloned() {
+                (name, Ok(data))
+            } else {
+                (name, Err(error))
+            }
+        }
+    }
+}
+
+async fn collect_unraid(
+    client: &UnraidClient,
+    state: &Arc<AppState>,
+) -> (String, Result<UnraidData, String>) {
+    let name = client.name.clone();
+    let key = source_key("unraid", &name);
+    let now = Utc::now().timestamp();
+    if let Some(retry) = state.source_runtime.read().unwrap().retry_in(&key, now) {
+        if let Some(data) = state
+            .source_runtime
+            .read()
+            .unwrap()
+            .unraid_last
+            .get(&key)
+            .cloned()
+        {
+            return (name, Ok(data));
+        }
+        return (name, Err(format!("backing off; retry in {retry}s")));
+    }
+    match client.collect().await {
+        Ok(data) => {
+            let mut runtime = state.source_runtime.write().unwrap();
+            runtime.record_success(&key, now);
+            runtime.unraid_last.insert(key, data.clone());
+            (name, Ok(data))
+        }
+        Err(e) => {
+            let error = format!("{e:#}");
+            let mut runtime = state.source_runtime.write().unwrap();
+            runtime.record_failure(&key, error.clone(), now);
+            if let Some(data) = runtime.unraid_last.get(&key).cloned() {
+                (name, Ok(data))
+            } else {
+                (name, Err(error))
+            }
+        }
+    }
+}
+
+async fn collect_unifi(client: &UnifiClient, state: &Arc<AppState>) -> Result<UnifiData, String> {
+    let key = source_key("unifi", "UniFi");
+    let now = Utc::now().timestamp();
+    if let Some(retry) = state.source_runtime.read().unwrap().retry_in(&key, now) {
+        if let Some(data) = state.source_runtime.read().unwrap().unifi_last.clone() {
+            return Ok(data);
+        }
+        return Err(format!("backing off; retry in {retry}s"));
+    }
+    match client.collect().await {
+        Ok(data) => {
+            let mut runtime = state.source_runtime.write().unwrap();
+            runtime.record_success(&key, now);
+            runtime.unifi_last = Some(data.clone());
+            Ok(data)
+        }
+        Err(e) => {
+            let error = format!("{e:#}");
+            let mut runtime = state.source_runtime.write().unwrap();
+            runtime.record_failure(&key, error.clone(), now);
+            if let Some(data) = runtime.unifi_last.clone() {
+                Ok(data)
+            } else {
+                Err(error)
+            }
         }
     }
 }
@@ -251,6 +430,10 @@ fn build(
                 name: name.clone(),
                 kind: "proxmox".to_string(),
                 ok: false,
+                stale: false,
+                failure_count: 1,
+                retry_in_sec: None,
+                last_ok_ago_sec: None,
                 detail: "unreachable".to_string(),
                 error: Some(e.clone()),
             }),
@@ -275,6 +458,10 @@ fn build(
                     name: name.clone(),
                     kind: "proxmox".to_string(),
                     ok: true,
+                    stale: false,
+                    failure_count: 0,
+                    retry_in_sec: None,
+                    last_ok_ago_sec: Some(0),
                     detail: format!("PVE {} · {} node(s)", data.release, node_count),
                     error: None,
                 });
@@ -293,6 +480,10 @@ fn build(
             name: "UniFi".to_string(),
             kind: "unifi".to_string(),
             ok: false,
+            stale: false,
+            failure_count: 1,
+            retry_in_sec: None,
+            last_ok_ago_sec: None,
             detail: "unreachable".to_string(),
             error: Some(e.clone()),
         }),
@@ -307,6 +498,10 @@ fn build(
                 name: "UniFi".to_string(),
                 kind: "unifi".to_string(),
                 ok: true,
+                stale: false,
+                failure_count: 0,
+                retry_in_sec: None,
+                last_ok_ago_sec: Some(0),
                 detail: format!("Network {} · {} devices", data.app_version, device_count),
                 error: None,
             });
@@ -331,6 +526,10 @@ fn build(
                 name: name.clone(),
                 kind: "unraid".to_string(),
                 ok: false,
+                stale: false,
+                failure_count: 1,
+                retry_in_sec: None,
+                last_ok_ago_sec: None,
                 detail: "unreachable".to_string(),
                 error: Some(e.clone()),
             }),
@@ -352,6 +551,10 @@ fn build(
                     name: data.source_name.clone(),
                     kind: "unraid".to_string(),
                     ok: true,
+                    stale: false,
+                    failure_count: 0,
+                    retry_in_sec: None,
+                    last_ok_ago_sec: Some(0),
                     detail: format!(
                         "Unraid {} · array {} · {} container(s)",
                         data.version,
@@ -392,7 +595,7 @@ fn build(
     let storage_tb_total = storage_total as f64 / 1_099_511_627_776.0;
 
     // ── Alerts ───────────────────────────────────────────────────────────
-    cands.sort_by(|a, b| sev_rank(&a.sev).cmp(&sev_rank(&b.sev)));
+    cands.sort_by_key(|a| sev_rank(&a.sev));
     let reconciled = store.reconcile(&cands, now);
     let notifications = reconciled.newly_active.clone();
     events.extend(reconciled.events);
@@ -701,20 +904,13 @@ fn build(
 }
 
 fn proxmox_quorum_label(data: &ProxmoxData) -> Option<String> {
-    let cluster = data
-        .cluster_status
-        .iter()
-        .find(|s| s.kind == "cluster")?;
+    let cluster = data.cluster_status.iter().find(|s| s.kind == "cluster")?;
     let status_nodes: Vec<_> = data
         .cluster_status
         .iter()
         .filter(|s| s.kind == "node")
         .collect();
-    let resource_nodes_total = data
-        .resources
-        .iter()
-        .filter(|r| r.kind == "node")
-        .count() as u32;
+    let resource_nodes_total = data.resources.iter().filter(|r| r.kind == "node").count() as u32;
     let total = cluster
         .nodes
         .unwrap_or(status_nodes.len() as u32)

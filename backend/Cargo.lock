@@ -558,11 +558,13 @@ dependencies = [
 name = "cybex-sentinel"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "argon2",
  "atomic_web_push",
  "axum",
  "axum-extra",
+ "base64 0.22.1",
  "chrono",
  "futures",
  "lettre",
@@ -576,6 +578,7 @@ dependencies = [
  "sqlx",
  "time",
  "tokio",
+ "tokio-stream",
  "tokio-tungstenite",
  "toml",
  "tower",
@@ -2907,6 +2910,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

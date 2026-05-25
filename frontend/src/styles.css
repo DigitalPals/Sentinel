@@ -2025,6 +2025,7 @@ hr.div { border: 0; border-top: 1px solid var(--line); margin: 0; }
   cursor: default;
 }
 .src-pill.ok { color: var(--ok); border-color: color-mix(in oklch, var(--ok) 26%, transparent); }
+.src-pill.stale { color: var(--warn); border-color: color-mix(in oklch, var(--warn) 32%, transparent); background: var(--warn-soft); }
 .src-pill.down { color: var(--crit); border-color: color-mix(in oklch, var(--crit) 30%, transparent); background: var(--crit-soft); }
 
 /* Connection-lost banner */

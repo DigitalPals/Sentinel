@@ -510,8 +510,10 @@ impl UnraidClient {
     }
 
     pub async fn collect(&self) -> anyhow::Result<UnraidData> {
-        let (raw, stats) =
-            futures::join!(self.graphql::<RawData>(COLLECT_QUERY), self.container_stats());
+        let (raw, stats) = futures::join!(
+            self.graphql::<RawData>(COLLECT_QUERY),
+            self.container_stats()
+        );
         let mut data = raw?.into_data(&self.name, &self.endpoint);
         match stats {
             Ok(stats) => merge_container_stats(&mut data.containers, stats),
@@ -562,7 +564,10 @@ impl UnraidClient {
             if now >= deadline {
                 break;
             }
-            let Some(msg) = tokio::time::timeout(deadline - now, ws.next()).await.ok().flatten()
+            let Some(msg) = tokio::time::timeout(deadline - now, ws.next())
+                .await
+                .ok()
+                .flatten()
             else {
                 break;
             };
@@ -588,10 +593,9 @@ impl UnraidClient {
                     .await?;
                 }
                 Some("next") => {
-                    let payload = value
-                        .get("payload")
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("Docker stats websocket frame missing payload"))?;
+                    let payload = value.get("payload").cloned().ok_or_else(|| {
+                        anyhow::anyhow!("Docker stats websocket frame missing payload")
+                    })?;
                     let payload: GqlWsPayload = serde_json::from_value(payload)?;
                     if let Some(errors) = payload.errors {
                         let msg = errors
@@ -907,7 +911,7 @@ fn sanitize_graphql_id(value: &str) -> String {
     let mut chars = value.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '\u{1b}' {
-            while let Some(next) = chars.next() {
+            for next in chars.by_ref() {
                 if next.is_ascii_alphabetic() {
                     break;
                 }

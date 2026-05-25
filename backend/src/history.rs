@@ -80,7 +80,7 @@ impl History {
     pub fn spark(&self, n: usize, field: impl Fn(&Sample) -> f64) -> Vec<f64> {
         let len = self.samples.len();
         let start = len.saturating_sub(n);
-        self.samples.iter().skip(start).map(|s| field(s)).collect()
+        self.samples.iter().skip(start).map(field).collect()
     }
 
     /// Signed change of a field over roughly the last `n` samples.

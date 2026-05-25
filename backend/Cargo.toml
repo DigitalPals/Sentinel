@@ -12,6 +12,7 @@ path = "src/main.rs"
 axum = "0.7"
 axum-extra = { version = "0.9", features = ["cookie"] }
 tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 # Authentication: Argon2id password hashing, CSPRNG session tokens, token
@@ -19,6 +20,8 @@ tower-http = { version = "0.6", features = ["fs", "trace"] }
 argon2 = "0.5"
 rand = "0.8"
 sha2 = "0.10"
+aes-gcm = "0.10"
+base64 = "0.22"
 # `time` is already in the tree via the cookie crate; used here only to set
 # the session cookie's Max-Age.
 time = "0.3"

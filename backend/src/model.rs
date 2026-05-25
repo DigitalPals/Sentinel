@@ -28,6 +28,10 @@ pub struct SourceHealth {
     pub name: String,
     pub kind: String,
     pub ok: bool,
+    pub stale: bool,
+    pub failure_count: u32,
+    pub retry_in_sec: Option<u64>,
+    pub last_ok_ago_sec: Option<u64>,
     pub detail: String,
     pub error: Option<String>,
 }
@@ -451,6 +455,20 @@ mod tests {
             &[
                 "name", "server", "host", "status", "cpu", "mem", "disk", "net", "netMbps",
                 "guests", "model", "uptime",
+            ],
+        );
+        assert_keys(
+            &SourceHealth::default(),
+            &[
+                "name",
+                "kind",
+                "ok",
+                "stale",
+                "failureCount",
+                "retryInSec",
+                "lastOkAgoSec",
+                "detail",
+                "error",
             ],
         );
         assert_keys(

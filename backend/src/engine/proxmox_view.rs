@@ -159,9 +159,7 @@ pub(super) fn process_proxmox(
             vm: guests.iter().filter(|g| g.kind == "vm").count() as u32,
             lxc: guests.iter().filter(|g| g.kind == "lxc").count() as u32,
         };
-        let status = if !online {
-            "crit"
-        } else if mem >= th.node_mem_crit || cpu >= th.node_cpu_crit {
+        let status = if !online || mem >= th.node_mem_crit || cpu >= th.node_cpu_crit {
             "crit"
         } else if mem >= th.node_mem_warn || cpu >= th.node_cpu_warn || disk >= th.node_disk_warn {
             "warn"

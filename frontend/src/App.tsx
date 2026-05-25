@@ -472,7 +472,7 @@ function AppBody({
                 >
                   <Icon name={editMode ? "check" : "layout"} />
                 </button>
-              ) : undefined
+              ) : null
             }
           />
           {stale && (

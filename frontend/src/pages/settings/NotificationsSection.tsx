@@ -139,7 +139,7 @@ function NotificationsCard({
       setPushDevice(device);
     } catch {
       setPushStatus(null);
-      setPushDevice(await getPushDeviceState().catch(() => "unsupported"));
+      setPushDevice(await getPushDeviceState().catch((): PushDeviceState => "unsupported"));
     }
   }, []);
 

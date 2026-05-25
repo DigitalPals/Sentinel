@@ -17,6 +17,7 @@ mod network_scanner;
 mod notify;
 mod proxmox;
 mod routes;
+mod secret;
 mod unifi;
 mod unraid;
 
@@ -24,7 +25,7 @@ use std::sync::{Arc, RwLock};
 
 use chrono::Local;
 use config::RuntimeConfig;
-use engine::{build_clients, AlertStore, AppState};
+use engine::{build_clients, AlertStore, AppState, SourceRuntime};
 use tracing_subscriber::fmt::{format::Writer, time::FormatTime};
 
 struct LocalTimer;
@@ -49,6 +50,12 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect().await?;
     db::migrate(&pool).await?;
     db::setup_timescale(&pool).await;
+    if secret::uses_fallback_key() {
+        tracing::warn!(
+            "SENTINEL_SECRET_KEY is not set; database credentials are encrypted with a local fallback key"
+        );
+    }
+    db::protect_existing_secrets(&pool).await?;
 
     // One-time helpers / sidecar modes.
     match std::env::args().nth(1).as_deref() {
@@ -90,13 +97,16 @@ async fn main() -> anyhow::Result<()> {
         config.history_max_samples,
     );
     let alerts = AlertStore::from_rows(db::load_alert_state(&pool).await?);
+    let (snapshot_tx, _) = tokio::sync::broadcast::channel(32);
 
     let bind = config.bind.clone();
     let state = Arc::new(AppState {
         pool,
         config: RwLock::new(Arc::new(config)),
         clients: RwLock::new(clients),
+        source_runtime: RwLock::new(SourceRuntime::default()),
         snapshot: RwLock::new(Arc::new(model::Snapshot::default())),
+        snapshot_tx,
         history: RwLock::new(history),
         alerts: RwLock::new(alerts),
     });
