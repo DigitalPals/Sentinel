@@ -154,9 +154,11 @@ export default function Dashboard({
           sub={`live · ${d.nodes.length} node(s) · cpu / mem / disk / net`}
           actions={
             <>
-              <Chip tone="ok" dot>
-                Quorum {d.quorum}
-              </Chip>
+              {d.quorum && (
+                <Chip tone="ok" dot>
+                  Quorum {d.quorum}
+                </Chip>
+              )}
               <Chip>{d.totalGuests} guests</Chip>
             </>
           }

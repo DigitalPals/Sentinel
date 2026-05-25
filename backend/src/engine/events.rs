@@ -103,6 +103,7 @@ mod tests {
                 source_kind: "proxmox".to_string(),
                 target: "vzdump".to_string(),
                 msg: "Backup completed successfully".to_string(),
+                dedupe_key: None,
             },
             Event {
                 ts: "2024-01-01T01:00:00Z".to_string(),
@@ -112,6 +113,7 @@ mod tests {
                 source_kind: "unifi".to_string(),
                 target: "heartbeat".to_string(),
                 msg: "device offline".to_string(),
+                dedupe_key: None,
             },
         ];
         let history = History::new(Vec::new(), 10);

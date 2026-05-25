@@ -278,6 +278,7 @@ pub(super) fn process_proxmox(
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| t.kind.clone()),
             msg,
+            dedupe_key: Some(format!("proxmox:task:{}", t.upid)),
         });
     }
     let _ = now;
@@ -350,6 +351,7 @@ mod tests {
             server: "cluster".to_string(),
             release: "8.2".to_string(),
             resources: vec![node, guest],
+            cluster_status: Vec::new(),
             node_rrd: HashMap::new(),
             tasks: Vec::new(),
         };

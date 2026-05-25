@@ -21,10 +21,10 @@ use sqlx::PgPool;
 
 pub use alerts::{patch_alerts, AlertStore};
 
-use self::alerts::{build_alerts_view, sev_rank, Candidate};
+use self::alerts::{build_alerts_view, build_dashboard_issues, sev_rank, Candidate};
 use self::bandwidth::build_bandwidth;
 use self::events::build_events_view;
-use self::format::{fmt_ago, fmt_mbps, kpi, pct};
+use self::format::{fmt_mbps, kpi, pct};
 use self::proxmox_view::process_proxmox;
 use self::topology::count_topology;
 use self::unifi_view::process_unifi;
@@ -178,7 +178,7 @@ async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
         unifi_fut
     );
 
-    let (snapshot, sample, notifications) = {
+    let (mut snapshot, sample, notifications) = {
         let mut history = state.history.write().unwrap();
         let mut store = state.alerts.write().unwrap();
         build(cfg, &pmx, &unraid_res, &unifi_res, &mut history, &mut store)
@@ -192,6 +192,17 @@ async fn poll_once(state: &Arc<AppState>, cfg: &RuntimeConfig) {
     let alert_rows = state.alerts.read().unwrap().rows();
     if let Err(e) = db::save_alert_state(&state.pool, &alert_rows).await {
         tracing::warn!("could not persist alert state: {e:#}");
+    }
+    if let Err(e) = db::save_event_logs(&state.pool, &snapshot.events.events).await {
+        tracing::warn!("could not persist event logs: {e:#}");
+    } else {
+        match db::recent_event_logs(&state.pool, 220).await {
+            Ok(events) => {
+                let history = state.history.read().unwrap();
+                snapshot.events = build_events_view(events, &history);
+            }
+            Err(e) => tracing::warn!("could not load persisted event logs: {e:#}"),
+        }
     }
 
     let ok_sources = snapshot.sources.iter().filter(|s| s.ok).count();
@@ -232,6 +243,7 @@ fn build(
     let mut cands: Vec<Candidate> = Vec::new();
     let mut storage_used: u64 = 0;
     let mut storage_total: u64 = 0;
+    let mut quorum_labels: Vec<String> = Vec::new();
 
     for (name, result) in pmx {
         match result {
@@ -254,6 +266,11 @@ fn build(
                 cands.extend(processed.candidates);
                 storage_used += processed.storage_used;
                 storage_total += processed.storage_total;
+                if let Some(label) = proxmox_quorum_label(data) {
+                    if !quorum_labels.contains(&label) {
+                        quorum_labels.push(label);
+                    }
+                }
                 sources.push(SourceHealth {
                     name: name.clone(),
                     kind: "proxmox".to_string(),
@@ -378,20 +395,21 @@ fn build(
     cands.sort_by(|a, b| sev_rank(&a.sev).cmp(&sev_rank(&b.sev)));
     let reconciled = store.reconcile(&cands, now);
     let notifications = reconciled.newly_active.clone();
+    events.extend(reconciled.events);
     let mut alerts = reconciled.alerts;
     alerts.sort_by(|a, b| {
         sev_rank(&a.sev)
             .cmp(&sev_rank(&b.sev))
             .then(a.age_min.cmp(&b.age_min))
     });
-    let active = alerts.iter().filter(|a| a.status != "resolved").count() as u32;
+    let active = alerts.iter().filter(|a| a.status == "open").count() as u32;
     let crit = alerts
         .iter()
-        .filter(|a| a.sev == "crit" && a.status != "resolved")
+        .filter(|a| a.sev == "crit" && a.status == "open")
         .count() as u32;
     let warn = alerts
         .iter()
-        .filter(|a| a.sev == "warn" && a.status != "resolved")
+        .filter(|a| a.sev == "warn" && a.status == "open")
         .count() as u32;
 
     // ── Events ───────────────────────────────────────────────────────────
@@ -482,17 +500,7 @@ fn build(
     ];
 
     let total_guests = all_guests.len() as u32;
-    let issues: Vec<Issue> = alerts
-        .iter()
-        .filter(|a| a.status != "resolved")
-        .take(6)
-        .map(|a| Issue {
-            sev: a.sev.clone(),
-            title: a.title.clone(),
-            source: format!("{} · {}", a.host, a.target),
-            time: fmt_ago(a.age_min),
-        })
-        .collect();
+    let issues = build_dashboard_issues(&alerts);
 
     let dashboard = Dashboard {
         kpis: dash_kpis,
@@ -501,7 +509,11 @@ fn build(
         nodes: nodes.clone(),
         topology_counts: count_topology(&topology),
         total_guests,
-        quorum: format!("{nodes_online}/{nodes_total}"),
+        quorum: if quorum_labels.is_empty() {
+            None
+        } else {
+            Some(quorum_labels.join(" · "))
+        },
     };
 
     // ── Proxmox page ─────────────────────────────────────────────────────
@@ -686,4 +698,123 @@ fn build(
         events: events_view,
     };
     (snapshot, sample, notifications)
+}
+
+fn proxmox_quorum_label(data: &ProxmoxData) -> Option<String> {
+    let cluster = data
+        .cluster_status
+        .iter()
+        .find(|s| s.kind == "cluster")?;
+    let status_nodes: Vec<_> = data
+        .cluster_status
+        .iter()
+        .filter(|s| s.kind == "node")
+        .collect();
+    let resource_nodes_total = data
+        .resources
+        .iter()
+        .filter(|r| r.kind == "node")
+        .count() as u32;
+    let total = cluster
+        .nodes
+        .unwrap_or(status_nodes.len() as u32)
+        .max(resource_nodes_total);
+    if total < 2 {
+        return None;
+    }
+
+    let status_has_online = status_nodes.iter().any(|s| s.online.is_some());
+    let status_online = status_nodes
+        .iter()
+        .filter(|s| s.online.unwrap_or(0) != 0)
+        .count() as u32;
+    let resource_online = data
+        .resources
+        .iter()
+        .filter(|r| r.kind == "node" && r.status.as_deref() == Some("online"))
+        .count() as u32;
+    let online = if status_has_online {
+        status_online
+    } else {
+        resource_online
+    };
+
+    Some(format!("{online}/{total}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proxmox::{PveClusterStatus, PveResource};
+
+    fn node(name: &str, status: &str) -> PveResource {
+        PveResource {
+            kind: "node".to_string(),
+            node: Some(name.to_string()),
+            status: Some(status.to_string()),
+            name: None,
+            storage: None,
+            content: None,
+            tags: None,
+            vmid: None,
+            cpu: 0.0,
+            maxcpu: 0.0,
+            mem: 0,
+            maxmem: 0,
+            disk: 0,
+            maxdisk: 0,
+            uptime: 0,
+        }
+    }
+
+    fn cluster_row(nodes: u32) -> PveClusterStatus {
+        PveClusterStatus {
+            kind: "cluster".to_string(),
+            id: Some("cluster".to_string()),
+            name: Some("pve".to_string()),
+            nodes: Some(nodes),
+            quorate: Some(1),
+            online: None,
+        }
+    }
+
+    fn status_node(name: &str, online: u8) -> PveClusterStatus {
+        PveClusterStatus {
+            kind: "node".to_string(),
+            id: Some(format!("node/{name}")),
+            name: Some(name.to_string()),
+            nodes: None,
+            quorate: None,
+            online: Some(online),
+        }
+    }
+
+    fn data(cluster_status: Vec<PveClusterStatus>) -> ProxmoxData {
+        ProxmoxData {
+            server: "pve".to_string(),
+            release: "8.2".to_string(),
+            resources: vec![node("pve1", "online"), node("pve2", "online")],
+            cluster_status,
+            node_rrd: Default::default(),
+            tasks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn standalone_proxmox_has_no_quorum_label() {
+        let d = data(vec![status_node("pve1", 1)]);
+
+        assert_eq!(proxmox_quorum_label(&d), None);
+    }
+
+    #[test]
+    fn clustered_proxmox_has_quorum_label() {
+        let d = data(vec![
+            cluster_row(2),
+            status_node("pve1", 1),
+            status_node("pve2", 1),
+        ]);
+
+        assert_eq!(proxmox_quorum_label(&d), Some("2/2".to_string()));
+    }
 }

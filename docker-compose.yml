@@ -10,9 +10,11 @@ services:
   db:
     image: timescale/timescaledb:2.17.2-pg16
     environment:
+      TZ: Europe/Amsterdam
       POSTGRES_USER: sentinel
       POSTGRES_PASSWORD: sentinel
       POSTGRES_DB: sentinel
+    command: ["postgres", "-c", "timezone=Europe/Amsterdam"]
     ports:
       # Bound to localhost so the DB isn't exposed beyond the host — handy
       # for `psql` from the host without making it world-reachable.
@@ -32,6 +34,7 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
+      TZ: Europe/Amsterdam
       DATABASE_URL: postgres://sentinel:sentinel@db:5432/sentinel
       RUST_LOG: cybex_sentinel=info,tower_http=warn
     ports:
@@ -45,6 +48,7 @@ services:
     image: cybex-sentinel:local
     command: ["network-scanner-worker"]
     environment:
+      TZ: Europe/Amsterdam
       # The scanner uses host networking so ARP/Nmap see the LAN. The database
       # is published on the host loopback above, so it connects through 127.0.0.1.
       DATABASE_URL: postgres://sentinel:sentinel@127.0.0.1:5432/sentinel

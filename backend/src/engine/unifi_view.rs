@@ -195,6 +195,7 @@ pub(super) fn process_unifi(data: &UnifiData, now: i64, th: &AlertThresholds) ->
                 source_kind: "unifi".to_string(),
                 target: "heartbeat".to_string(),
                 msg: format!("device unreachable — {} '{}' offline", dev.kind, dev.name),
+                dedupe_key: Some(format!("unifi:device:{}:offline", dev.id)),
             });
         } else if cpu >= th.unifi_cpu_warn || mem >= th.unifi_mem_warn {
             cands.push(Candidate {
@@ -239,6 +240,7 @@ pub(super) fn process_unifi(data: &UnifiData, now: i64, th: &AlertThresholds) ->
                     source_kind: "unifi".to_string(),
                     target: "provision".to_string(),
                     msg: format!("{} '{}' provisioned · fw {}", dev.kind, dev.name, dev.fw),
+                    dedupe_key: Some(format!("unifi:device:{}:provision:{prov}", dev.id)),
                 });
             }
         }

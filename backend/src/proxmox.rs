@@ -81,11 +81,26 @@ pub struct PveTask {
     pub endtime: Option<i64>,
 }
 
+/// One row from `/cluster/status`. Standalone nodes generally return node rows
+/// only; clustered systems include a `type=cluster` row with quorum metadata.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct PveClusterStatus {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub nodes: Option<u32>,
+    pub quorate: Option<u8>,
+    pub online: Option<u8>,
+}
+
 /// Result of probing a single Proxmox host.
 pub struct ProxmoxData {
     pub server: String,
     pub release: String,
     pub resources: Vec<PveResource>,
+    pub cluster_status: Vec<PveClusterStatus>,
     /// node name -> latest non-empty RRD sample
     pub node_rrd: std::collections::HashMap<String, RrdPoint>,
     pub tasks: Vec<PveTask>,
@@ -139,6 +154,17 @@ impl ProxmoxClient {
             .get_json("/cluster/resources")
             .await
             .context("/cluster/resources")?;
+        let cluster_status: Vec<PveClusterStatus> =
+            match self.get_json("/cluster/status").await {
+                Ok(status) => status,
+                Err(e) => {
+                    tracing::warn!(
+                        "could not read Proxmox cluster status for '{}': {e:#}",
+                        self.name
+                    );
+                    Vec::new()
+                }
+            };
 
         let node_names: Vec<String> = resources
             .iter()
@@ -175,6 +201,7 @@ impl ProxmoxClient {
             server: self.name.clone(),
             release: version.release,
             resources,
+            cluster_status,
             node_rrd,
             tasks,
         })

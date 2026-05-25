@@ -316,6 +316,7 @@ pub(super) fn process_unraid(
                 "parity check {}% · {}",
                 data.array.parity.progress, data.array.parity.speed
             ),
+            dedupe_key: Some(format!("unraid:{}:parity", data.source_name)),
         });
     }
 
@@ -337,6 +338,16 @@ pub(super) fn process_unraid(
             source_kind: "unraid".to_string(),
             target: "notification".to_string(),
             msg: n.title.clone(),
+            dedupe_key: Some(format!(
+                "unraid:{}:notification:{}:{}",
+                data.source_name,
+                if n.timestamp.is_empty() {
+                    "unknown-time"
+                } else {
+                    n.timestamp.as_str()
+                },
+                slug_key(&n.title)
+            )),
         });
         cands.push(Candidate {
             key: format!(

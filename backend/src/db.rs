@@ -9,13 +9,15 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::Context;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{FromRow, PgPool, Row};
 
 use crate::history::Sample;
+use crate::model::Event;
 
 /// Connection string used when `DATABASE_URL` is not set — matches the bundled
 /// `docker-compose.yml`, so the common case needs no environment variables.
@@ -560,7 +562,7 @@ pub async fn latest_completed_network_scan_job(
     sqlx::query_as::<_, NetworkScanJobRow>(
         "SELECT id, status, trigger, settings, summary, error, created_at, started_at, finished_at \
          FROM network_scan_jobs \
-         WHERE status = 'succeeded' \
+         WHERE status = 'succeeded' AND trigger <> 'host-port-scan' \
          ORDER BY finished_at DESC NULLS LAST, created_at DESC LIMIT 1",
     )
     .fetch_optional(pool)
@@ -974,6 +976,162 @@ pub async fn recent_samples(pool: &PgPool, limit: usize) -> anyhow::Result<Vec<S
     .await
     .context("loading recent metric samples")?;
     Ok(rows.into_iter().rev().map(Sample::from).collect())
+}
+
+// ── Event logs ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, FromRow)]
+struct EventLogRow {
+    last_seen: DateTime<Utc>,
+    level: String,
+    source_kind: String,
+    source: String,
+    target: String,
+    msg: String,
+}
+
+/// Persist an observed event batch. Repeated poll-observed states update one
+/// `event_log_state` row, while brand-new event keys are also inserted into the
+/// bounded/compressed `event_logs` hypertable.
+pub async fn save_event_logs(pool: &PgPool, events: &[Event]) -> anyhow::Result<()> {
+    let now = Utc::now();
+    let retention_floor = now - ChronoDuration::days(30);
+    let future_ceiling = now + ChronoDuration::days(1);
+    let mut tx = pool.begin().await.context("begin event-log transaction")?;
+    sqlx::query("DELETE FROM event_log_state WHERE last_seen < now() - INTERVAL '30 days'")
+        .execute(&mut *tx)
+        .await
+        .context("pruning event-log state")?;
+    for e in events {
+        let mut ts = event_ts(e).unwrap_or(now);
+        if ts < retention_floor {
+            continue;
+        }
+        if ts > future_ceiling {
+            ts = now;
+        }
+        let bucket = event_bucket(ts);
+        let key = event_log_key(e);
+        let row = sqlx::query(
+            "INSERT INTO event_log_state (event_key, first_seen, last_seen, level, \
+             source_kind, source, target, msg, seen_count, updated_at) \
+             VALUES ($1, $2, $2, $3, $4, $5, $6, $7, 1, now()) \
+             ON CONFLICT (event_key) DO UPDATE SET \
+               last_seen = GREATEST(event_log_state.last_seen, EXCLUDED.last_seen), \
+               level = EXCLUDED.level, \
+               source_kind = EXCLUDED.source_kind, \
+               source = EXCLUDED.source, \
+               target = EXCLUDED.target, \
+               msg = EXCLUDED.msg, \
+               seen_count = event_log_state.seen_count + 1, \
+               updated_at = now() \
+             RETURNING (xmax = 0) AS inserted",
+        )
+        .bind(&key)
+        .bind(ts)
+        .bind(&e.level)
+        .bind(&e.source_kind)
+        .bind(&e.source)
+        .bind(&e.target)
+        .bind(&e.msg)
+        .fetch_one(&mut *tx)
+        .await
+        .context("writing event-log state")?;
+        if !row.get::<bool, _>("inserted") {
+            continue;
+        }
+
+        sqlx::query(
+            "INSERT INTO event_logs (bucket, first_seen, last_seen, event_key, level, \
+             source_kind, source, target, msg, seen_count, updated_at) \
+             VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, 1, now()) \
+             ON CONFLICT (bucket, event_key) DO UPDATE SET \
+               last_seen = GREATEST(event_logs.last_seen, EXCLUDED.last_seen), \
+               level = EXCLUDED.level, \
+               source_kind = EXCLUDED.source_kind, \
+               source = EXCLUDED.source, \
+               target = EXCLUDED.target, \
+               msg = EXCLUDED.msg, \
+               seen_count = event_logs.seen_count + 1, \
+               updated_at = now() \
+             WHERE event_logs.bucket > now() - INTERVAL '7 days'",
+        )
+        .bind(bucket)
+        .bind(ts)
+        .bind(key)
+        .bind(&e.level)
+        .bind(&e.source_kind)
+        .bind(&e.source)
+        .bind(&e.target)
+        .bind(&e.msg)
+        .execute(&mut *tx)
+        .await
+        .context("writing event log")?;
+    }
+    tx.commit().await.context("commit event-log transaction")?;
+    Ok(())
+}
+
+/// Load the most recent persisted event log rows, newest-first for the live log
+/// tail in the UI.
+pub async fn recent_event_logs(pool: &PgPool, limit: usize) -> anyhow::Result<Vec<Event>> {
+    let rows = sqlx::query_as::<_, EventLogRow>(
+        "SELECT last_seen, level, source_kind, source, target, msg \
+         FROM event_log_state ORDER BY last_seen DESC LIMIT $1",
+    )
+    .bind(limit as i64)
+    .fetch_all(pool)
+    .await
+    .context("loading recent event logs")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let local = r.last_seen.with_timezone(&Local);
+            Event {
+                ts: r.last_seen.to_rfc3339(),
+                time: local.format("%H:%M:%S").to_string(),
+                level: r.level,
+                source: r.source,
+                source_kind: r.source_kind,
+                target: r.target,
+                msg: r.msg,
+                dedupe_key: None,
+            }
+        })
+        .collect())
+}
+
+fn event_ts(e: &Event) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(&e.ts)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+fn event_bucket(ts: DateTime<Utc>) -> DateTime<Utc> {
+    const FIVE_MIN: i64 = 5 * 60;
+    let bucket = ts.timestamp() - ts.timestamp().rem_euclid(FIVE_MIN);
+    DateTime::from_timestamp(bucket, 0).unwrap_or(ts)
+}
+
+fn event_log_key(e: &Event) -> String {
+    let raw = match e.dedupe_key.as_deref() {
+        Some(key) => format!("explicit:{key}"),
+        None => format!(
+            "fallback:{}\x1f{}\x1f{}\x1f{}\x1f{}",
+            e.level, e.source_kind, e.source, e.target, e.msg
+        ),
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(raw.as_bytes());
+    hex(&hasher.finalize())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
 }
 
 // ── Alert state ─────────────────────────────────────────────────────────────

@@ -136,11 +136,13 @@ export function useSnapshot(): SnapshotState {
 
 /** Apply an acknowledge / resolve / reopen action to an alert. */
 export async function alertAction(id: string, action: string): Promise<void> {
-  await apiFetch("/api/alerts/action", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, action }),
-  });
+  await jsonOrThrow(
+    await apiFetch("/api/alerts/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, action }),
+    }),
+  );
 }
 
 // ── Settings & sources ──────────────────────────────────────────────────────

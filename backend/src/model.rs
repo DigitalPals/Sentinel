@@ -144,7 +144,7 @@ pub struct Dashboard {
     pub nodes: Vec<NodeTile>,
     pub topology_counts: TopoCounts,
     pub total_guests: u32,
-    pub quorum: String,
+    pub quorum: Option<String>,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -374,6 +374,8 @@ pub struct Event {
     pub source_kind: String,
     pub target: String,
     pub msg: String,
+    #[serde(skip_serializing)]
+    pub dedupe_key: Option<String>,
 }
 
 #[derive(Serialize, Clone, Default)]

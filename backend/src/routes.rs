@@ -172,19 +172,15 @@ struct ActionReq {
 async fn alert_action(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ActionReq>,
-) -> impl IntoResponse {
+) -> ApiResult<serde_json::Value> {
     let applied = state.alerts.write().unwrap().apply(&req.id, &req.action);
-    if applied {
-        patch_alerts(&state);
-        // Persist the workflow change so it survives a restart.
-        let rows = state.alerts.read().unwrap().rows();
-        if let Err(e) = db::save_alert_state(&state.pool, &rows).await {
-            tracing::warn!("could not persist alert state: {e:#}");
-        }
-        (StatusCode::OK, "ok")
-    } else {
-        (StatusCode::NOT_FOUND, "unknown alert")
+    if !applied {
+        return Err(not_found("unknown alert"));
     }
+    patch_alerts(&state);
+    let rows = state.alerts.read().unwrap().rows();
+    db::save_alert_state(&state.pool, &rows).await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 // ── Settings ────────────────────────────────────────────────────────────────

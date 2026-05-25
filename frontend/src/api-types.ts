@@ -110,7 +110,7 @@ export interface Dashboard {
   nodes: NodeTile[];
   topologyCounts: TopoCounts;
   totalGuests: number;
-  quorum: string;
+  quorum: string | null;
 }
 
 export interface ProxmoxView {

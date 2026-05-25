@@ -22,12 +22,23 @@ mod unraid;
 
 use std::sync::{Arc, RwLock};
 
+use chrono::Local;
 use config::RuntimeConfig;
 use engine::{build_clients, AlertStore, AppState};
+use tracing_subscriber::fmt::{format::Writer, time::FormatTime};
+
+struct LocalTimer;
+
+impl FormatTime for LocalTimer {
+    fn format_time(&self, w: &mut Writer<'_>) -> std::fmt::Result {
+        write!(w, "{}", Local::now().format("%Y-%m-%dT%H:%M:%S%.6f%:z"))
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
+        .with_timer(LocalTimer)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "cybex_sentinel=info,tower_http=warn".into()),
