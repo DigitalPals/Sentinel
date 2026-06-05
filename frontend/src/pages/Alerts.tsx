@@ -14,13 +14,27 @@ function fmtAgo(min: number): string {
 
 const sevLabel = (s: string) => (s === "crit" ? "Critical" : s === "warn" ? "Warning" : "Info");
 
-export default function Alerts({ snap, refresh }: { snap: Snapshot; refresh: () => void }) {
+export default function Alerts({
+  snap,
+  refresh,
+  selectedId: routedSelectedId,
+  onSelectAlert,
+}: {
+  snap: Snapshot;
+  refresh: () => void;
+  selectedId?: string | null;
+  onSelectAlert?: (id: string) => void;
+}) {
   const all = snap.alerts.alerts;
   const [tab, setTab] = React.useState<"open" | "ack" | "resolved" | "all">("open");
   const [sev, setSev] = React.useState("all");
   const [source, setSource] = React.useState("all");
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [selectedId, setSelectedId] = React.useState<string | null>(routedSelectedId ?? null);
   const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    setSelectedId(routedSelectedId ?? null);
+  }, [routedSelectedId]);
 
   const counts = {
     open: all.filter((a) => a.status === "open").length,
@@ -39,6 +53,11 @@ export default function Alerts({ snap, refresh }: { snap: Snapshot; refresh: () 
   const sel: Alert | undefined = all.find((a) => a.id === selectedId) || filtered[0];
   const hist = snap.alerts.histogram;
   const histMax = Math.max(1, ...hist);
+
+  const selectAlert = (id: string) => {
+    setSelectedId(id);
+    onSelectAlert?.(id);
+  };
 
   const act = async (action: string) => {
     if (!sel) return;
@@ -130,7 +149,7 @@ export default function Alerts({ snap, refresh }: { snap: Snapshot; refresh: () 
             {filtered.map((a) => (
               <div
                 key={a.id}
-                onClick={() => setSelectedId(a.id)}
+                onClick={() => selectAlert(a.id)}
                 className={"alert-row" + (sel && a.id === sel.id ? " selected" : "")}
               >
                 <div className={"alert-sev " + a.sev}>

@@ -67,6 +67,7 @@ export interface NodeGuests {
 }
 
 export interface Issue {
+  id: string;
   sev: string;
   title: string;
   source: string;

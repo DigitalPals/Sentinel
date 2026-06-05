@@ -298,6 +298,7 @@ pub(super) fn build_dashboard_issues(alerts: &[Alert]) -> Vec<Issue> {
         .filter(|a| a.status == "open")
         .take(6)
         .map(|a| Issue {
+            id: a.id.clone(),
             sev: a.sev.clone(),
             title: a.title.clone(),
             source: format!("{} · {}", a.host, a.target),
@@ -421,6 +422,7 @@ mod tests {
         let issues = build_dashboard_issues(&reconciled.alerts);
 
         assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].id, "b");
         assert_eq!(issues[0].source, "host · target");
     }
 

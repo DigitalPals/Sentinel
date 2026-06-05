@@ -92,6 +92,7 @@ pub struct NodeGuests {
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Issue {
+    pub id: String,
     pub sev: String,
     pub title: String,
     pub source: String,

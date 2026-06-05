@@ -18,11 +18,13 @@ export default function Dashboard({
   editMode,
   layoutStore,
   onLayoutChange,
+  onOpenIssue,
 }: {
   snap: Snapshot;
   editMode: boolean;
   layoutStore: LayoutStore;
   onLayoutChange: (pageId: string, layout: EditableLayoutValue) => void;
+  onOpenIssue: (id: string) => void;
 }) {
   const d = snap.dashboard;
   const unraid = snap.unraid;
@@ -127,8 +129,14 @@ export default function Dashboard({
           tight
         >
           {d.issues.length === 0 && <div className="empty-row">No active issues — all systems nominal.</div>}
-          {d.issues.map((it, i) => (
-            <div className="issue" key={i}>
+          {d.issues.map((it) => (
+            <button
+              className="issue"
+              key={it.id}
+              type="button"
+              onClick={() => onOpenIssue(it.id)}
+              aria-label={`Open alert details for ${it.title}`}
+            >
               <div className={"issue-icon " + it.sev}>
                 <Icon name={it.sev === "info" ? "info" : "alert"} />
               </div>
@@ -137,7 +145,7 @@ export default function Dashboard({
                 <div className="issue-meta">{it.source}</div>
               </div>
               <div className="issue-time">{it.time}</div>
-            </div>
+            </button>
           ))}
         </Card>
       ),

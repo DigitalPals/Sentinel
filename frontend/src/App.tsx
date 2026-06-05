@@ -41,6 +41,7 @@ const EDITABLE_PAGES = new Set(["dashboard", "unifi", "proxmox", "unraid"]);
 function resolvePage(): string {
   const path = location.pathname.replace(/^\/+|\/+$/g, "");
   if (PAGES[path]) return path;
+  if (path.startsWith("alerts/")) return "alerts";
   if (path.startsWith("network-scanner/")) return "network-host";
   // /settings/<section> still resolves to the settings page.
   if (path === "settings" || path.startsWith("settings/")) return "settings";
@@ -61,10 +62,21 @@ function resolveNetworkHost(): string {
   return m ? decodeURIComponent(m[1]) : "";
 }
 
+function resolveAlertId(): string | null {
+  const m = location.pathname.match(/^\/alerts\/([^/?#]+)/);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
+
 const pathForPage = (p: string, section?: string): string => {
   if (p === "dashboard") return "/";
   if (p === "settings") return "/settings/" + (section ?? DEFAULT_SECTION);
   if (p === "network-host") return "/network-scanner/" + encodeURIComponent(section ?? "");
+  if (p === "alerts") return section ? "/alerts/" + encodeURIComponent(section) : "/alerts";
   return "/" + p;
 };
 
@@ -178,6 +190,7 @@ function AppBody({
   const onboarding = useOnboarding(justSetUp);
   const [page, setPageState] = React.useState<string>(resolvePage);
   const [networkHost, setNetworkHost] = React.useState<string>(resolveNetworkHost);
+  const [alertId, setAlertId] = React.useState<string | null>(resolveAlertId);
   const [settingsSection, setSettingsSection] =
     React.useState<SectionId>(resolveSettingsSection);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
@@ -203,6 +216,8 @@ function AppBody({
       );
     } else if (p === "network-host") {
       setNetworkHost(section ?? "");
+    } else if (p === "alerts") {
+      setAlertId(section ?? null);
     }
     window.scrollTo(0, 0);
   }, []);
@@ -242,13 +257,14 @@ function AppBody({
     if (current === "settings") {
       // Bare /settings → default sub-section.
       window.history.replaceState({}, "", "/settings/" + DEFAULT_SECTION);
-    } else if (!PAGES[current] && !current.startsWith("settings/") && !current.startsWith("network-scanner/")) {
+    } else if (!PAGES[current] && !current.startsWith("settings/") && !current.startsWith("network-scanner/") && !current.startsWith("alerts/")) {
       const hash = location.hash.replace(/^#/, "");
       if (PAGES[hash]) window.history.replaceState({}, "", pathForPage(hash));
     }
     const onPop = () => {
       setPageState(resolvePage());
       setNetworkHost(resolveNetworkHost());
+      setAlertId(resolveAlertId());
       setSettingsSection(resolveSettingsSection());
     };
     window.addEventListener("popstate", onPop);
@@ -347,6 +363,14 @@ function AppBody({
       : baseMeta;
   const alertCount = snap.alerts.alerts.filter((a) => a.status === "open").length;
   const stale = staleSec > Math.max(20, snap.pollIntervalSec * 3);
+  const selectAlert = (id: string) => {
+    const target = pathForPage("alerts", id);
+    if (location.pathname !== target) {
+      window.history.pushState({}, "", target);
+    }
+    setPageState("alerts");
+    setAlertId(id);
+  };
 
   let pageEl: React.ReactNode;
   switch (page) {
@@ -398,7 +422,14 @@ function AppBody({
       );
       break;
     case "alerts":
-      pageEl = <Alerts snap={snap} refresh={refresh} />;
+      pageEl = (
+        <Alerts
+          snap={snap}
+          refresh={refresh}
+          selectedId={alertId}
+          onSelectAlert={selectAlert}
+        />
+      );
       break;
     case "logs":
       pageEl = <Events snap={snap} />;
@@ -420,6 +451,7 @@ function AppBody({
           editMode={editMode}
           layoutStore={settings.layouts}
           onLayoutChange={savePageLayout}
+          onOpenIssue={(id) => navigate("alerts", id)}
         />
       );
   }
