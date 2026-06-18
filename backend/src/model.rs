@@ -346,6 +346,149 @@ pub struct UnraidView {
 
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct PbsDatastoreOut {
+    pub source: String,
+    pub store: String,
+    pub used: String,
+    pub total: String,
+    pub avail: String,
+    pub used_pct: u32,
+    pub groups: u32,
+    pub snapshots: u32,
+    pub status: String,
+    pub gc_status: String,
+    pub maintenance_mode: String,
+}
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PbsBackupOut {
+    pub id: String,
+    pub source: String,
+    pub namespace: String,
+    pub backup_type: String,
+    pub backup_id: String,
+    pub guest_name: String,
+    pub guest_node: String,
+    pub guest_server: String,
+    pub backup_time: String,
+    pub age_min: i64,
+    pub size: String,
+    pub size_bytes: u64,
+    pub verification: String,
+    pub protected: bool,
+    pub owner: String,
+}
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PbsTaskOut {
+    pub id: String,
+    pub source: String,
+    pub worker_type: String,
+    pub worker_id: String,
+    pub status: String,
+    pub start_time: String,
+    pub age_min: i64,
+    pub duration_sec: Option<i64>,
+    pub user: String,
+    pub ok: bool,
+}
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PbsCoverageFinding {
+    pub id: String,
+    pub tone: String,
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+    pub guest_id: u64,
+    pub guest_type: String,
+    pub guest_name: String,
+    pub namespace: String,
+    pub age_min: Option<i64>,
+}
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PbsCoverage {
+    pub protected: u32,
+    pub missing: u32,
+    pub stale: u32,
+    pub orphaned: u32,
+    pub findings: Vec<PbsCoverageFinding>,
+}
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PbsView {
+    pub kpis: Vec<Kpi>,
+    pub datastores: Vec<PbsDatastoreOut>,
+    pub recent_backups: Vec<PbsBackupOut>,
+    pub recent_tasks: Vec<PbsTaskOut>,
+    pub coverage: PbsCoverage,
+    pub latest_backup_age_min: Option<i64>,
+    pub failed_tasks_24h: u32,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BmcControllerOut {
+    pub name: String,
+    pub host: String,
+    pub manufacturer: String,
+    pub model: String,
+    pub serial: String,
+    pub bios_version: String,
+    pub power_state: String,
+    pub health: String,
+    pub processor_count: u32,
+    pub memory_gib: u32,
+    pub manager_model: String,
+    pub manager_firmware: String,
+    pub manager_uuid: String,
+    pub ipmi_available: bool,
+    pub ipmi_power: String,
+    pub ipmi_manufacturer: String,
+    pub ipmi_product: String,
+    pub ipmi_firmware: String,
+    pub ipmi_version: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BmcSensorOut {
+    pub source: String,
+    pub name: String,
+    pub kind: String,
+    pub status: String,
+    pub reading: Option<f64>,
+    pub unit: String,
+    pub raw: String,
+    pub tone: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BmcDriveOut {
+    pub source: String,
+    pub name: String,
+    pub manufacturer: String,
+    pub model: String,
+    pub serial: String,
+    pub capacity: String,
+    pub health: String,
+    pub state: String,
+    pub tone: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BmcView {
+    pub kpis: Vec<Kpi>,
+    pub controllers: Vec<BmcControllerOut>,
+    pub sensors: Vec<BmcSensorOut>,
+    pub drives: Vec<BmcDriveOut>,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct Alert {
     pub id: String,
     pub sev: String,
@@ -402,6 +545,8 @@ pub struct Snapshot {
     pub proxmox: ProxmoxView,
     pub unifi: UnifiView,
     pub unraid: UnraidView,
+    pub pbs: PbsView,
+    pub bmc: BmcView,
     pub topology: TopoNode,
     pub alerts: AlertsView,
     pub events: EventsView,
@@ -441,6 +586,8 @@ mod tests {
                 "proxmox",
                 "unifi",
                 "unraid",
+                "pbs",
+                "bmc",
                 "topology",
                 "alerts",
                 "events",

@@ -141,6 +141,7 @@ export default function Alerts({
               <option value="all">All sources</option>
               <option value="unifi">UniFi</option>
               <option value="proxmox">Proxmox</option>
+              <option value="pbs">PBS</option>
             </select>
           </div>
 
@@ -195,7 +196,7 @@ export default function Alerts({
               </div>
             </div>
 
-            <div style={{ padding: "14px 18px", fontSize: 12.5, color: "var(--fg-1)", lineHeight: 1.55 }}>{sel.desc}</div>
+            <div style={{ padding: "14px 18px", fontSize: 12.5, color: "var(--fg-1)", lineHeight: 1.55, whiteSpace: "pre-line" }}>{sel.desc}</div>
 
             <hr className="div" />
 
@@ -287,7 +288,10 @@ export default function Alerts({
               )}
               {sel.status === "ack" && (
                 <>
-                  <button className="filter-pill active" disabled={busy} onClick={() => act("resolve")}>
+                  <button className="filter-pill active" disabled={busy} onClick={() => act("ignore")}>
+                    Ignore until clear
+                  </button>
+                  <button className="filter-pill" disabled={busy} onClick={() => act("resolve")}>
                     Mark resolved
                   </button>
                   <button className="filter-pill" disabled={busy} onClick={() => act("reopen")}>

@@ -7,6 +7,7 @@
 //! connection string (which has a sensible default).
 
 mod auth;
+mod bmc;
 mod config;
 mod db;
 mod engine;
@@ -15,6 +16,7 @@ mod importer;
 mod model;
 mod network_scanner;
 mod notify;
+mod pbs;
 mod proxmox;
 mod routes;
 mod secret;
@@ -77,8 +79,10 @@ async fn main() -> anyhow::Result<()> {
 
     let config = RuntimeConfig::load(&pool).await?;
     tracing::info!(
-        "config loaded — {} Proxmox source(s), {} Unraid source(s), UniFi {}",
+        "config loaded — {} Proxmox source(s), {} PBS source(s), {} BMC source(s), {} Unraid source(s), UniFi {}",
         config.proxmox.len(),
+        config.pbs.len(),
+        config.bmc.len(),
         config.unraid.len(),
         if config.unifi.is_some() {
             "configured"
@@ -86,7 +90,12 @@ async fn main() -> anyhow::Result<()> {
             "not configured"
         },
     );
-    if config.unifi.is_none() && config.proxmox.is_empty() && config.unraid.is_empty() {
+    if config.unifi.is_none()
+        && config.proxmox.is_empty()
+        && config.pbs.is_empty()
+        && config.bmc.is_empty()
+        && config.unraid.is_empty()
+    {
         tracing::warn!("no sources configured yet — add them on the Settings page");
     }
     db::configure_metric_retention(&pool, config.history_retention_days).await?;

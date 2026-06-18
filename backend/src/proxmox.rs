@@ -79,6 +79,18 @@ pub struct PveTask {
     pub id: Option<String>,
     pub starttime: i64,
     pub endtime: Option<i64>,
+    #[serde(default, skip_deserializing)]
+    pub log: Vec<String>,
+}
+
+/// One row from `/nodes/{node}/tasks/{upid}/log`.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct PveTaskLogRow {
+    #[serde(default)]
+    pub n: u64,
+    #[serde(default)]
+    pub t: String,
 }
 
 /// One row from `/cluster/status`. Standalone nodes generally return node rows
@@ -193,6 +205,21 @@ impl ProxmoxClient {
                 .get_json::<Vec<PveTask>>(&format!("/nodes/{node}/tasks?limit=40&source=archive"))
                 .await
             {
+                for task in &mut t {
+                    if !should_collect_task_log(task) {
+                        continue;
+                    }
+                    match self.task_log(node, &task.upid).await {
+                        Ok(log) => task.log = log,
+                        Err(e) => tracing::warn!(
+                            source = %self.name,
+                            node,
+                            upid = %task.upid,
+                            error = %e,
+                            "could not read Proxmox task log"
+                        ),
+                    }
+                }
                 tasks.append(&mut t);
             }
         }
@@ -206,4 +233,34 @@ impl ProxmoxClient {
             tasks,
         })
     }
+
+    async fn task_log(&self, node: &str, upid: &str) -> anyhow::Result<Vec<String>> {
+        let node = path_segment(node);
+        let upid = path_segment(upid);
+        let rows: Vec<PveTaskLogRow> = self
+            .get_json(&format!("/nodes/{node}/tasks/{upid}/log?start=0&limit=500"))
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| r.t.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect())
+    }
+}
+
+fn should_collect_task_log(task: &PveTask) -> bool {
+    task.kind == "vzdump" && task.status.as_deref().is_some_and(|s| s != "OK")
+}
+
+fn path_segment(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for b in raw.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }

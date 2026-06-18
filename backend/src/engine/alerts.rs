@@ -76,7 +76,7 @@ impl AlertStore {
                 became_present && meta.occurrences > 0 && now - meta.last_seen < 30;
             if became_present {
                 meta.occurrences += 1;
-                if meta.status != "open" {
+                if meta.status != "open" && meta.status != "ignored" {
                     meta.status = "open".to_string();
                     meta.assignee = None;
                 }
@@ -84,6 +84,9 @@ impl AlertStore {
             meta.present = true;
             meta.loaded_from_db = false;
             meta.last_seen = now;
+            if meta.status == "ignored" {
+                continue;
+            }
             let alert = Alert {
                 id: c.key.clone(),
                 sev: c.sev.clone(),
@@ -107,8 +110,12 @@ impl AlertStore {
             out.push(alert);
         }
         // Drop conditions that cleared more than 30 minutes ago.
-        self.map
-            .retain(|_, m| m.present || now - m.last_seen < 1800);
+        self.map.retain(|_, m| {
+            if m.status == "ignored" && !m.present {
+                return false;
+            }
+            m.present || now - m.last_seen < 1800
+        });
         ReconciledAlerts {
             alerts: out,
             newly_active,
@@ -134,6 +141,10 @@ impl AlertStore {
                 meta.assignee = Some("J. Pals".to_string());
             }
             "resolve" => meta.status = "resolved".to_string(),
+            "ignore" => {
+                meta.status = "ignored".to_string();
+                meta.assignee = None;
+            }
             "reopen" => {
                 meta.status = "open".to_string();
                 meta.assignee = None;
@@ -195,6 +206,7 @@ pub fn patch_alerts(state: &AppState) {
             }
         }
     }
+    alerts.retain(|a| a.status != "ignored");
     let history = state.history.read().unwrap();
     let open = alerts.iter().filter(|a| a.status == "open").count() as u32;
     let crit = alerts
@@ -374,6 +386,31 @@ mod tests {
         assert_eq!(fired.alerts[0].status, "open");
         assert_eq!(fired.alerts[0].occurrences, 2);
         assert_eq!(fired.newly_active.len(), 1);
+    }
+
+    #[test]
+    fn ignored_ack_is_hidden_until_clear_then_refires_as_new_alert() {
+        let mut store = AlertStore::default();
+        store.reconcile(&[candidate("a")], 1_000);
+        assert!(store.apply("a", "ack"));
+        assert!(store.apply("a", "ignore"));
+
+        let ignored = store.reconcile(&[candidate("a")], 1_060);
+        assert!(ignored.alerts.is_empty());
+        assert!(ignored.newly_active.is_empty());
+        assert!(ignored.events.is_empty());
+        assert_eq!(store.rows().len(), 1);
+        assert_eq!(store.rows()[0].status, "ignored");
+
+        store.reconcile(&[], 1_120);
+        assert!(store.rows().is_empty());
+
+        let refired = store.reconcile(&[candidate("a")], 1_180);
+        assert_eq!(refired.alerts.len(), 1);
+        assert_eq!(refired.alerts[0].status, "open");
+        assert_eq!(refired.alerts[0].occurrences, 1);
+        assert_eq!(refired.alerts[0].age_min, 0);
+        assert_eq!(refired.newly_active.len(), 1);
     }
 
     #[test]

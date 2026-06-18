@@ -20,6 +20,11 @@ export type {
   AppSettings,
   AuthStatus,
   BandwidthSeries,
+  BmcController,
+  BmcDrive,
+  BmcSensor,
+  BmcSource,
+  BmcView,
   Dashboard,
   EventsView,
   Guest,
@@ -47,6 +52,11 @@ export type {
   PortScanTechnique,
   PushStatus,
   PortOut,
+  PbsBackup,
+  PbsCoverageFinding,
+  PbsDatastore,
+  PbsSource,
+  PbsTask,
   ProxmoxSource,
   ProxmoxView,
   RadioOut,
@@ -173,7 +183,7 @@ export function useSnapshot(): SnapshotState {
   return { snap, ready, error, staleSec, refresh: fetchSnapshot };
 }
 
-/** Apply an acknowledge / resolve / reopen action to an alert. */
+/** Apply an acknowledge / resolve / ignore / reopen action to an alert. */
 export async function alertAction(id: string, action: string): Promise<void> {
   await jsonOrThrow(
     await apiFetch("/api/alerts/action", {
@@ -282,6 +292,42 @@ export async function saveProxmoxSource(
 
 export async function deleteProxmoxSource(id: number): Promise<void> {
   await jsonOrThrow(await apiFetch(`/api/sources/proxmox/${id}`, { method: "DELETE" }));
+}
+
+export async function savePbsSource(
+  id: number | null,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const url = id == null ? "/api/sources/pbs" : `/api/sources/pbs/${id}`;
+  await jsonOrThrow(
+    await apiFetch(url, {
+      method: id == null ? "POST" : "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function saveBmcSource(
+  id: number | null,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const url = id == null ? "/api/sources/bmc" : `/api/sources/bmc/${id}`;
+  await jsonOrThrow(
+    await apiFetch(url, {
+      method: id == null ? "POST" : "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function deleteBmcSource(id: number): Promise<void> {
+  await jsonOrThrow(await apiFetch(`/api/sources/bmc/${id}`, { method: "DELETE" }));
+}
+
+export async function deletePbsSource(id: number): Promise<void> {
+  await jsonOrThrow(await apiFetch(`/api/sources/pbs/${id}`, { method: "DELETE" }));
 }
 
 export async function saveUnraidSource(

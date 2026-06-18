@@ -104,6 +104,7 @@ export default function Events({ snap }: { snap: Snapshot }) {
             <option value="all">All sources</option>
             <option value="unifi">UniFi</option>
             <option value="proxmox">Proxmox</option>
+              <option value="pbs">PBS</option>
           </select>
 
           <div className="filters-spacer" />

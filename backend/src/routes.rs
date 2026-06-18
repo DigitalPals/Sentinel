@@ -23,8 +23,9 @@ use tower_http::{
 };
 
 use crate::auth;
+use crate::bmc::BmcClient;
 use crate::config::{
-    AlertThresholds, ProxmoxConfig, RuntimeConfig, UiPrefs, UnifiConfig, UnraidConfig,
+    AlertThresholds, BmcConfig, PbsConfig, ProxmoxConfig, RuntimeConfig, UiPrefs, UnifiConfig, UnraidConfig,
 };
 use crate::db;
 use crate::engine::{patch_alerts, AppState};
@@ -32,6 +33,7 @@ use crate::network_scanner::{self, settings_to_value, NetworkScanPort, NetworkSc
 use crate::notify::{
     self, NotificationChannel, NotificationSettingsPublic, NotificationSettingsUpdate,
 };
+use crate::pbs::PbsClient;
 use crate::proxmox::ProxmoxClient;
 use crate::unifi::{DeviceBundle, LegacyClient, UniClient, UnifiClient};
 use crate::unraid::UnraidClient;
@@ -81,6 +83,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/sources/unifi/:id",
             put(update_unifi).delete(delete_unifi),
         )
+        .route("/api/sources/pbs", post(create_pbs))
+        .route("/api/sources/pbs/:id", put(update_pbs).delete(delete_pbs))
+        .route("/api/sources/bmc", post(create_bmc))
+        .route("/api/sources/bmc/:id", put(update_bmc).delete(delete_bmc))
         .route("/api/sources/unraid", post(create_unraid))
         .route(
             "/api/sources/unraid/:id",
@@ -203,7 +209,7 @@ struct ActionReq {
     action: String,
 }
 
-/// Apply an acknowledge / resolve / reopen action to a tracked alert.
+/// Apply an acknowledge / resolve / ignore / reopen action to a tracked alert.
 async fn alert_action(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ActionReq>,
@@ -1582,6 +1588,30 @@ struct ProxmoxSourceOut {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct PbsSourceOut {
+    id: i64,
+    name: String,
+    host: String,
+    token_id: String,
+    /// Whether a token secret is stored — the secret itself is never sent.
+    has_secret: bool,
+    enabled: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BmcSourceOut {
+    id: i64,
+    name: String,
+    host: String,
+    username: String,
+    /// Whether a password is stored — the secret itself is never sent.
+    has_secret: bool,
+    enabled: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct UnraidSourceOut {
     id: i64,
     name: String,
@@ -1596,6 +1626,8 @@ struct UnraidSourceOut {
 struct SourcesResponse {
     unifi: Vec<UnifiSourceOut>,
     proxmox: Vec<ProxmoxSourceOut>,
+    pbs: Vec<PbsSourceOut>,
+    bmc: Vec<BmcSourceOut>,
     unraid: Vec<UnraidSourceOut>,
 }
 
@@ -1624,6 +1656,30 @@ async fn get_sources(State(state): State<Arc<AppState>>) -> ApiResult<SourcesRes
             enabled: r.enabled,
         })
         .collect();
+    let pbs = db::get_pbs_sources(&state.pool)
+        .await?
+        .into_iter()
+        .map(|r| PbsSourceOut {
+            id: r.id,
+            name: r.name,
+            host: r.host,
+            token_id: r.token_id,
+            has_secret: !r.token_secret.is_empty(),
+            enabled: r.enabled,
+        })
+        .collect();
+    let bmc = db::get_bmc_sources(&state.pool)
+        .await?
+        .into_iter()
+        .map(|r| BmcSourceOut {
+            id: r.id,
+            name: r.name,
+            host: r.host,
+            username: r.username,
+            has_secret: !r.password.is_empty(),
+            enabled: r.enabled,
+        })
+        .collect();
     let unraid = db::get_unraid_sources(&state.pool)
         .await?
         .into_iter()
@@ -1638,6 +1694,8 @@ async fn get_sources(State(state): State<Arc<AppState>>) -> ApiResult<SourcesRes
     Ok(Json(SourcesResponse {
         unifi,
         proxmox,
+        pbs,
+        bmc,
         unraid,
     }))
 }
@@ -1706,6 +1764,186 @@ async fn delete_unifi(
 ) -> ApiResult<serde_json::Value> {
     if !db::delete_unifi_source(&state.pool, id).await? {
         return Err(not_found("unknown UniFi source"));
+    }
+    refresh_config(&state).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PbsSourceIn {
+    name: String,
+    host: String,
+    token_id: String,
+    /// Omitted or empty on update keeps the stored secret.
+    token_secret: Option<String>,
+    enabled: Option<bool>,
+}
+
+async fn create_pbs(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PbsSourceIn>,
+) -> ApiResult<serde_json::Value> {
+    let name = req.name.trim();
+    let host = req.host.trim();
+    let token_id = req.token_id.trim();
+    if name.is_empty() || host.is_empty() || token_id.is_empty() {
+        return Err(bad_request("name, host and token ID are required"));
+    }
+    let token_secret = req.token_secret.unwrap_or_default();
+    if token_secret.trim().is_empty() {
+        return Err(bad_request("token secret is required"));
+    }
+    let taken = db::get_pbs_sources(&state.pool)
+        .await?
+        .iter()
+        .any(|r| r.name == name);
+    if taken {
+        return Err(bad_request(format!(
+            "a PBS source named '{name}' already exists"
+        )));
+    }
+    let id = db::insert_pbs_source(
+        &state.pool,
+        name,
+        host,
+        token_id,
+        token_secret.trim(),
+        req.enabled.unwrap_or(true),
+    )
+    .await?;
+    refresh_config(&state).await?;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn update_pbs(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(req): Json<PbsSourceIn>,
+) -> ApiResult<serde_json::Value> {
+    let existing = db::get_pbs_source(&state.pool, id)
+        .await?
+        .ok_or_else(|| not_found("unknown PBS source"))?;
+    let name = req.name.trim();
+    let host = req.host.trim();
+    let token_id = req.token_id.trim();
+    if name.is_empty() || host.is_empty() || token_id.is_empty() {
+        return Err(bad_request("name, host and token ID are required"));
+    }
+    let token_secret = match req.token_secret {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => existing.token_secret,
+    };
+    db::update_pbs_source(
+        &state.pool,
+        id,
+        name,
+        host,
+        token_id,
+        &token_secret,
+        req.enabled.unwrap_or(existing.enabled),
+    )
+    .await?;
+    refresh_config(&state).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn delete_pbs(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> ApiResult<serde_json::Value> {
+    if !db::delete_pbs_source(&state.pool, id).await? {
+        return Err(not_found("unknown PBS source"));
+    }
+    refresh_config(&state).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BmcSourceIn {
+    name: String,
+    host: String,
+    username: String,
+    /// Omitted or empty on update keeps the stored password.
+    password: Option<String>,
+    enabled: Option<bool>,
+}
+
+async fn create_bmc(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BmcSourceIn>,
+) -> ApiResult<serde_json::Value> {
+    let name = req.name.trim();
+    let host = req.host.trim();
+    let username = req.username.trim();
+    if name.is_empty() || host.is_empty() || username.is_empty() {
+        return Err(bad_request("name, host and username are required"));
+    }
+    let password = req.password.unwrap_or_default();
+    if password.trim().is_empty() {
+        return Err(bad_request("password is required"));
+    }
+    let taken = db::get_bmc_sources(&state.pool)
+        .await?
+        .iter()
+        .any(|r| r.name == name);
+    if taken {
+        return Err(bad_request(format!(
+            "a BMC source named '{name}' already exists"
+        )));
+    }
+    let id = db::insert_bmc_source(
+        &state.pool,
+        name,
+        host,
+        username,
+        password.trim(),
+        req.enabled.unwrap_or(true),
+    )
+    .await?;
+    refresh_config(&state).await?;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn update_bmc(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(req): Json<BmcSourceIn>,
+) -> ApiResult<serde_json::Value> {
+    let existing = db::get_bmc_source(&state.pool, id)
+        .await?
+        .ok_or_else(|| not_found("unknown BMC source"))?;
+    let name = req.name.trim();
+    let host = req.host.trim();
+    let username = req.username.trim();
+    if name.is_empty() || host.is_empty() || username.is_empty() {
+        return Err(bad_request("name, host and username are required"));
+    }
+    let password = match req.password {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => existing.password,
+    };
+    db::update_bmc_source(
+        &state.pool,
+        id,
+        name,
+        host,
+        username,
+        &password,
+        req.enabled.unwrap_or(existing.enabled),
+    )
+    .await?;
+    refresh_config(&state).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn delete_bmc(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> ApiResult<serde_json::Value> {
+    if !db::delete_bmc_source(&state.pool, id).await? {
+        return Err(not_found("unknown BMC source"));
     }
     refresh_config(&state).await?;
     Ok(Json(json!({ "ok": true })))
@@ -1897,6 +2135,8 @@ struct TestRequest {
     api_key: Option<String>,
     token_id: Option<String>,
     token_secret: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1975,6 +2215,86 @@ async fn test_source(
                 Ok(d) => TestResult {
                     ok: true,
                     detail: format!("Proxmox VE {} reachable", d.release),
+                },
+                Err(e) => TestResult {
+                    ok: false,
+                    detail: format!("{e:#}"),
+                },
+            }))
+        }
+        "pbs" => {
+            let stored = match req.id {
+                Some(id) => db::get_pbs_source(&state.pool, id).await?,
+                None => None,
+            };
+            let token_id = match req.token_id {
+                Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+                _ => stored
+                    .as_ref()
+                    .map(|s| s.token_id.clone())
+                    .ok_or_else(|| bad_request("token ID is required"))?,
+            };
+            let token_secret = match req.token_secret {
+                Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+                _ => stored
+                    .as_ref()
+                    .map(|s| s.token_secret.clone())
+                    .ok_or_else(|| bad_request("token secret is required"))?,
+            };
+            let cfg = PbsConfig {
+                name: "test".to_string(),
+                host,
+                token_id,
+                token_secret,
+            };
+            let client = PbsClient::new(&cfg, timeout)?;
+            Ok(Json(match client.collect().await {
+                Ok(d) => TestResult {
+                    ok: true,
+                    detail: format!("PBS {} · {} datastore(s)", d.version, d.datastores.len()),
+                },
+                Err(e) => TestResult {
+                    ok: false,
+                    detail: format!("{e:#}"),
+                },
+            }))
+        }
+        "bmc" => {
+            let stored = match req.id {
+                Some(id) => db::get_bmc_source(&state.pool, id).await?,
+                None => None,
+            };
+            let username = match req.username {
+                Some(u) if !u.trim().is_empty() => u.trim().to_string(),
+                _ => stored
+                    .as_ref()
+                    .map(|s| s.username.clone())
+                    .ok_or_else(|| bad_request("username is required"))?,
+            };
+            let password = match req.password {
+                Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+                _ => stored
+                    .as_ref()
+                    .map(|s| s.password.clone())
+                    .ok_or_else(|| bad_request("password is required"))?,
+            };
+            let cfg = BmcConfig {
+                name: "test".to_string(),
+                host,
+                username,
+                password,
+            };
+            let client = BmcClient::new(&cfg, timeout)?;
+            Ok(Json(match client.collect().await {
+                Ok(d) => TestResult {
+                    ok: true,
+                    detail: format!(
+                        "{} BMC {} · {} · {} sensor(s)",
+                        d.manufacturer,
+                        d.manager_firmware,
+                        d.power_state,
+                        d.sensors.len()
+                    ),
                 },
                 Err(e) => TestResult {
                     ok: false,

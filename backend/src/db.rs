@@ -185,6 +185,44 @@ pub async fn protect_existing_secrets(pool: &PgPool) -> anyhow::Result<()> {
         }
     }
 
+    let pbs = sqlx::query("SELECT id, token_secret FROM pbs_sources")
+        .fetch_all(pool)
+        .await
+        .context("loading PBS secrets for protection")?;
+    for row in pbs {
+        let id: i64 = row.get("id");
+        let token_secret: String = row.get("token_secret");
+        let sealed = secret::seal(&token_secret)?;
+        if sealed != token_secret {
+            sqlx::query(
+                "UPDATE pbs_sources SET token_secret = $2, updated_at = now() WHERE id = $1",
+            )
+            .bind(id)
+            .bind(sealed)
+            .execute(pool)
+            .await
+            .context("protecting PBS secret")?;
+        }
+    }
+
+    let bmc = sqlx::query("SELECT id, password FROM bmc_sources")
+        .fetch_all(pool)
+        .await
+        .context("loading BMC secrets for protection")?;
+    for row in bmc {
+        let id: i64 = row.get("id");
+        let password: String = row.get("password");
+        let sealed = secret::seal(&password)?;
+        if sealed != password {
+            sqlx::query("UPDATE bmc_sources SET password = $2, updated_at = now() WHERE id = $1")
+                .bind(id)
+                .bind(sealed)
+                .execute(pool)
+                .await
+                .context("protecting BMC secret")?;
+        }
+    }
+
     let unraid = sqlx::query("SELECT id, api_key FROM unraid_sources")
         .fetch_all(pool)
         .await
@@ -242,6 +280,28 @@ pub struct ProxmoxSourceRow {
     pub host: String,
     pub token_id: String,
     pub token_secret: String,
+    pub enabled: bool,
+}
+
+/// A configured PBS source as stored in the database.
+#[derive(Debug, Clone, FromRow)]
+pub struct PbsSourceRow {
+    pub id: i64,
+    pub name: String,
+    pub host: String,
+    pub token_id: String,
+    pub token_secret: String,
+    pub enabled: bool,
+}
+
+/// A configured BMC/IPMI source as stored in the database.
+#[derive(Debug, Clone, FromRow)]
+pub struct BmcSourceRow {
+    pub id: i64,
+    pub name: String,
+    pub host: String,
+    pub username: String,
+    pub password: String,
     pub enabled: bool,
 }
 
@@ -423,6 +483,178 @@ pub async fn delete_proxmox_source(pool: &PgPool, id: i64) -> anyhow::Result<boo
         .execute(pool)
         .await
         .context("deleting Proxmox source")?;
+    Ok(res.rows_affected() > 0)
+}
+
+pub async fn get_pbs_sources(pool: &PgPool) -> anyhow::Result<Vec<PbsSourceRow>> {
+    let mut rows = sqlx::query_as::<_, PbsSourceRow>(
+        "SELECT id, name, host, token_id, token_secret, enabled FROM pbs_sources ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .context("loading PBS sources")?;
+    for row in &mut rows {
+        row.token_secret = secret::open(&row.token_secret)?;
+    }
+    Ok(rows)
+}
+
+pub async fn get_pbs_source(pool: &PgPool, id: i64) -> anyhow::Result<Option<PbsSourceRow>> {
+    let mut row = sqlx::query_as::<_, PbsSourceRow>(
+        "SELECT id, name, host, token_id, token_secret, enabled FROM pbs_sources WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .context("loading PBS source")?;
+    if let Some(row) = &mut row {
+        row.token_secret = secret::open(&row.token_secret)?;
+    }
+    Ok(row)
+}
+
+pub async fn insert_pbs_source(
+    pool: &PgPool,
+    name: &str,
+    host: &str,
+    token_id: &str,
+    token_secret: &str,
+    enabled: bool,
+) -> anyhow::Result<i64> {
+    let token_secret = secret::seal(token_secret)?;
+    let row = sqlx::query(
+        "INSERT INTO pbs_sources (name, host, token_id, token_secret, enabled) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(name)
+    .bind(host)
+    .bind(token_id)
+    .bind(token_secret)
+    .bind(enabled)
+    .fetch_one(pool)
+    .await
+    .context("inserting PBS source")?;
+    Ok(row.get("id"))
+}
+
+pub async fn update_pbs_source(
+    pool: &PgPool,
+    id: i64,
+    name: &str,
+    host: &str,
+    token_id: &str,
+    token_secret: &str,
+    enabled: bool,
+) -> anyhow::Result<bool> {
+    let token_secret = secret::seal(token_secret)?;
+    let res = sqlx::query(
+        "UPDATE pbs_sources SET name = $2, host = $3, token_id = $4, token_secret = $5, \
+         enabled = $6, updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(host)
+    .bind(token_id)
+    .bind(token_secret)
+    .bind(enabled)
+    .execute(pool)
+    .await
+    .context("updating PBS source")?;
+    Ok(res.rows_affected() > 0)
+}
+
+pub async fn delete_pbs_source(pool: &PgPool, id: i64) -> anyhow::Result<bool> {
+    let res = sqlx::query("DELETE FROM pbs_sources WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .context("deleting PBS source")?;
+    Ok(res.rows_affected() > 0)
+}
+
+pub async fn get_bmc_sources(pool: &PgPool) -> anyhow::Result<Vec<BmcSourceRow>> {
+    let mut rows = sqlx::query_as::<_, BmcSourceRow>(
+        "SELECT id, name, host, username, password, enabled FROM bmc_sources ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .context("loading BMC sources")?;
+    for row in &mut rows {
+        row.password = secret::open(&row.password)?;
+    }
+    Ok(rows)
+}
+
+pub async fn get_bmc_source(pool: &PgPool, id: i64) -> anyhow::Result<Option<BmcSourceRow>> {
+    let mut row = sqlx::query_as::<_, BmcSourceRow>(
+        "SELECT id, name, host, username, password, enabled FROM bmc_sources WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .context("loading BMC source")?;
+    if let Some(row) = &mut row {
+        row.password = secret::open(&row.password)?;
+    }
+    Ok(row)
+}
+
+pub async fn insert_bmc_source(
+    pool: &PgPool,
+    name: &str,
+    host: &str,
+    username: &str,
+    password: &str,
+    enabled: bool,
+) -> anyhow::Result<i64> {
+    let password = secret::seal(password)?;
+    let row = sqlx::query(
+        "INSERT INTO bmc_sources (name, host, username, password, enabled) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(name)
+    .bind(host)
+    .bind(username)
+    .bind(password)
+    .bind(enabled)
+    .fetch_one(pool)
+    .await
+    .context("inserting BMC source")?;
+    Ok(row.get("id"))
+}
+
+pub async fn update_bmc_source(
+    pool: &PgPool,
+    id: i64,
+    name: &str,
+    host: &str,
+    username: &str,
+    password: &str,
+    enabled: bool,
+) -> anyhow::Result<bool> {
+    let password = secret::seal(password)?;
+    let res = sqlx::query(
+        "UPDATE bmc_sources SET name = $2, host = $3, username = $4, password = $5, \
+         enabled = $6, updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(host)
+    .bind(username)
+    .bind(password)
+    .bind(enabled)
+    .execute(pool)
+    .await
+    .context("updating BMC source")?;
+    Ok(res.rows_affected() > 0)
+}
+
+pub async fn delete_bmc_source(pool: &PgPool, id: i64) -> anyhow::Result<bool> {
+    let res = sqlx::query("DELETE FROM bmc_sources WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .context("deleting BMC source")?;
     Ok(res.rows_affected() > 0)
 }
 

@@ -3,14 +3,20 @@
 // and live test-connection.
 import React from "react";
 import {
+  BmcSource,
+  PbsSource,
   ProxmoxSource,
   SourcesData,
   UnraidSource,
   UnifiSource,
+  deleteBmcSource,
+  deletePbsSource,
   deleteProxmoxSource,
   deleteUnraidSource,
   deleteUnifiSource,
   getSources,
+  saveBmcSource,
+  savePbsSource,
   saveProxmoxSource,
   saveUnraidSource,
   saveUnifiSource,
@@ -20,28 +26,36 @@ import { Card } from "../../components";
 import { Icon } from "../../icons";
 import { Field, Msg, Tone, Toggle } from "./shared";
 
-type Kind = "unifi" | "proxmox" | "unraid";
+type Kind = "unifi" | "proxmox" | "pbs" | "bmc" | "unraid";
 
 // Keep in sync with simple-icons brand hexes used by <Icon name="…">.
 const BRAND_HEX: Record<Kind, string> = {
   unraid: "#F15A2C",
   unifi: "#0559C9",
   proxmox: "#E57000",
+  pbs: "#7adfff",
+  bmc: "#A855F7",
 };
 const LABEL: Record<Kind, string> = {
   unraid: "Unraid",
   unifi: "UniFi Network",
   proxmox: "Proxmox VE",
+  pbs: "Proxmox Backup Server",
+  bmc: "IPMI / Redfish BMC",
 };
 const TAGLINE: Record<Kind, string> = {
   unraid: "NAS & storage",
   unifi: "Network controller",
   proxmox: "Virtualisation hosts",
+  pbs: "Backup datastores",
+  bmc: "Server hardware telemetry",
 };
 const ADD_NOUN: Record<Kind, string> = {
   unraid: "server",
   unifi: "controller",
   proxmox: "host",
+  pbs: "server",
+  bmc: "controller",
 };
 
 function SourceForm({
@@ -52,24 +66,27 @@ function SourceForm({
   onMsg,
 }: {
   kind: Kind;
-  source: UnifiSource | ProxmoxSource | UnraidSource | null;
+  source: UnifiSource | ProxmoxSource | PbsSource | BmcSource | UnraidSource | null;
   onDone: () => void;
   onCancel: () => void;
   onMsg: (tone: Tone, text: string) => void;
 }) {
   const isProxmox = kind === "proxmox";
+  const isPbs = kind === "pbs";
+  const isBmc = kind === "bmc";
   const isUnraid = kind === "unraid";
   const editing = source != null;
-  const [name, setName] = React.useState(source?.name ?? (isProxmox ? "" : isUnraid ? "Unraid" : "UniFi"));
+  const [name, setName] = React.useState(source?.name ?? (isProxmox ? "" : isPbs ? "PBS BlackBox" : isBmc ? "The Beast IPMI" : isUnraid ? "Unraid" : "UniFi"));
   const [host, setHost] = React.useState(source?.host ?? "");
-  const [tokenId, setTokenId] = React.useState((source as ProxmoxSource | null)?.tokenId ?? "");
+  const [tokenId, setTokenId] = React.useState((source as ProxmoxSource | PbsSource | null)?.tokenId ?? "");
+  const [username, setUsername] = React.useState((source as BmcSource | null)?.username ?? "admin");
   const [secret, setSecret] = React.useState("");
   const [enabled, setEnabled] = React.useState(source?.enabled ?? true);
   const [busy, setBusy] = React.useState(false);
   const [test, setTest] = React.useState<{ tone: Tone; text: string } | null>(null);
 
   const secretSet = editing && source?.hasSecret;
-  const secretLabel = isProxmox ? "Token secret" : "API key";
+  const secretLabel = isProxmox || isPbs ? "Token secret" : isBmc ? "Password" : "API key";
 
   const save = async () => {
     setBusy(true);
@@ -81,6 +98,22 @@ function SourceForm({
           host,
           tokenId,
           tokenSecret: secret || undefined,
+          enabled,
+        });
+      } else if (isPbs) {
+        await savePbsSource(editing ? source!.id : null, {
+          name,
+          host,
+          tokenId,
+          tokenSecret: secret || undefined,
+          enabled,
+        });
+      } else if (isBmc) {
+        await saveBmcSource(editing ? source!.id : null, {
+          name,
+          host,
+          username,
+          password: secret || undefined,
           enabled,
         });
       } else if (isUnraid) {
@@ -98,7 +131,7 @@ function SourceForm({
           enabled,
         });
       }
-      onMsg("ok", `${isProxmox ? "Proxmox" : isUnraid ? "Unraid" : "UniFi"} source ${editing ? "updated" : "added"}.`);
+      onMsg("ok", `${isProxmox ? "Proxmox" : isPbs ? "PBS" : isBmc ? "BMC" : isUnraid ? "Unraid" : "UniFi"} source ${editing ? "updated" : "added"}.`);
       onDone();
     } catch (e: any) {
       onMsg("err", String(e?.message ?? e));
@@ -112,8 +145,10 @@ function SourceForm({
     setTest(null);
     try {
       const r = await testSource(
-        isProxmox
+        isProxmox || isPbs
           ? { kind, id: source?.id, host, tokenId, tokenSecret: secret || undefined }
+          : isBmc
+            ? { kind, id: source?.id, host, username, password: secret || undefined }
           : isUnraid
             ? { kind, id: source?.id, host, apiKey: secret || undefined }
           : { kind, id: source?.id, host, apiKey: secret || undefined },
@@ -137,6 +172,10 @@ function SourceForm({
           hint={
             isProxmox
               ? "Include scheme and port, e.g. https://10.0.0.1:8006"
+              : isPbs
+                ? "Include scheme and port, e.g. https://10.10.0.41:8007"
+              : isBmc
+                ? "Include scheme, e.g. https://10.10.0.14"
               : isUnraid
                 ? "Include scheme when known, e.g. https://10.10.0.40"
                 : "Include scheme and port when needed, e.g. https://10.0.0.1"
@@ -151,12 +190,21 @@ function SourceForm({
         </Field>
       </div>
       <div className="set-row set-grid-2">
-        {isProxmox && (
+        {(isProxmox || isPbs) && (
           <Field label="Token ID" hint="user@realm!token-name">
             <input
               className="set-input"
               value={tokenId}
               onChange={(e) => setTokenId(e.target.value)}
+            />
+          </Field>
+        )}
+        {isBmc && (
+          <Field label="Username">
+            <input
+              className="set-input"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
             />
           </Field>
         )}
@@ -199,7 +247,7 @@ function ServicePanel({
   onMsg,
 }: {
   kind: Kind;
-  sources: (UnifiSource | ProxmoxSource | UnraidSource)[];
+  sources: (UnifiSource | ProxmoxSource | PbsSource | BmcSource | UnraidSource)[];
   onChanged: () => void;
   onMsg: (tone: Tone, text: string) => void;
 }) {
@@ -211,6 +259,8 @@ function ServicePanel({
     if (!window.confirm(`Delete source "${name}"?`)) return;
     try {
       if (kind === "proxmox") await deleteProxmoxSource(id);
+      else if (kind === "pbs") await deletePbsSource(id);
+      else if (kind === "bmc") await deleteBmcSource(id);
       else if (kind === "unraid") await deleteUnraidSource(id);
       else await deleteUnifiSource(id);
       onMsg("ok", `Source "${name}" deleted.`);
@@ -322,7 +372,7 @@ export default function SourcesSection() {
       {msg && <div className={"set-banner " + msg.tone}>{msg.text}</div>}
       <Card
         title="Infrastructure Sources"
-        sub="Unraid, UniFi and Proxmox endpoints Sentinel polls — credentials are stored in the database"
+        sub="Unraid, UniFi, Proxmox, PBS and IPMI/Redfish endpoints Sentinel polls — credentials are stored in the database"
       >
         <div className="src-services">
           {!sources && <div className="set-note">Loading…</div>}
@@ -343,6 +393,18 @@ export default function SourcesSection() {
               <ServicePanel
                 kind="proxmox"
                 sources={sources.proxmox}
+                onChanged={reload}
+                onMsg={showMsg}
+              />
+              <ServicePanel
+                kind="pbs"
+                sources={sources.pbs}
+                onChanged={reload}
+                onMsg={showMsg}
+              />
+              <ServicePanel
+                kind="bmc"
+                sources={sources.bmc}
                 onChanged={reload}
                 onMsg={showMsg}
               />

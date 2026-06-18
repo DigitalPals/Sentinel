@@ -34,6 +34,24 @@ pub struct ProxmoxConfig {
     pub token_secret: String,
 }
 
+/// Connection details for a Proxmox Backup Server endpoint.
+#[derive(Debug, Clone, Hash)]
+pub struct PbsConfig {
+    pub name: String,
+    pub host: String,
+    pub token_id: String,
+    pub token_secret: String,
+}
+
+/// Connection details for a BMC/IPMI endpoint.
+#[derive(Debug, Clone, Hash)]
+pub struct BmcConfig {
+    pub name: String,
+    pub host: String,
+    pub username: String,
+    pub password: String,
+}
+
 /// Connection details for an Unraid GraphQL API endpoint.
 #[derive(Debug, Clone, Hash)]
 pub struct UnraidConfig {
@@ -130,6 +148,8 @@ pub struct RuntimeConfig {
     pub network_scanner: NetworkScannerSettings,
     pub unifi: Option<UnifiConfig>,
     pub proxmox: Vec<ProxmoxConfig>,
+    pub pbs: Vec<PbsConfig>,
+    pub bmc: Vec<BmcConfig>,
     pub unraid: Vec<UnraidConfig>,
 }
 
@@ -139,6 +159,8 @@ impl RuntimeConfig {
         let map = db::get_settings_map(pool).await?;
         let unifi_rows = db::get_unifi_sources(pool).await?;
         let proxmox_rows = db::get_proxmox_sources(pool).await?;
+        let pbs_rows = db::get_pbs_sources(pool).await?;
+        let bmc_rows = db::get_bmc_sources(pool).await?;
         let unraid_rows = db::get_unraid_sources(pool).await?;
 
         // The engine drives a single UniFi controller; use the first enabled one.
@@ -157,6 +179,26 @@ impl RuntimeConfig {
                 host: r.host,
                 token_id: r.token_id,
                 token_secret: r.token_secret,
+            })
+            .collect();
+        let pbs = pbs_rows
+            .into_iter()
+            .filter(|r| r.enabled)
+            .map(|r| PbsConfig {
+                name: r.name,
+                host: r.host,
+                token_id: r.token_id,
+                token_secret: r.token_secret,
+            })
+            .collect();
+        let bmc = bmc_rows
+            .into_iter()
+            .filter(|r| r.enabled)
+            .map(|r| BmcConfig {
+                name: r.name,
+                host: r.host,
+                username: r.username,
+                password: r.password,
             })
             .collect();
         let unraid = unraid_rows
@@ -190,6 +232,8 @@ impl RuntimeConfig {
             ),
             unifi,
             proxmox,
+            pbs,
+            bmc,
             unraid,
         })
     }
@@ -202,6 +246,8 @@ impl RuntimeConfig {
         let mut h = DefaultHasher::new();
         self.unifi.hash(&mut h);
         self.proxmox.hash(&mut h);
+        self.pbs.hash(&mut h);
+        self.bmc.hash(&mut h);
         self.unraid.hash(&mut h);
         self.http_timeout_sec.hash(&mut h);
         h.finish()

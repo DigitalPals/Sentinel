@@ -9,6 +9,8 @@ import Unifi from "./pages/Unifi";
 import NetworkScanner from "./pages/NetworkScanner";
 import NetworkHostDetail from "./pages/NetworkHostDetail";
 import Proxmox from "./pages/Proxmox";
+import Pbs from "./pages/Pbs";
+import Bmc from "./pages/Bmc";
 import Unraid from "./pages/Unraid";
 import Alerts from "./pages/Alerts";
 import Events from "./pages/Events";
@@ -29,13 +31,15 @@ const PAGES: Record<string, { crumb: string; title: string }> = {
   "network-scanner": { crumb: "Network / Scanner", title: "Network Scanner" },
   "network-host": { crumb: "Network / Scanner / Host", title: "Host Details" },
   proxmox: { crumb: "Compute / Proxmox VE", title: "Proxmox Servers & Guests" },
+  pbs: { crumb: "Storage / Proxmox Backup Server", title: "Proxmox Backup Server" },
+  bmc: { crumb: "Hardware / IPMI & Redfish", title: "IPMI / Redfish BMC" },
   unraid: { crumb: "Storage / Unraid", title: "Unraid Servers" },
   alerts: { crumb: "Operations / Alerts", title: "Alerts" },
   logs: { crumb: "Operations / Events & Logs", title: "Events & Logs" },
   settings: { crumb: "System / Configuration", title: "Settings" },
 };
 
-const EDITABLE_PAGES = new Set(["dashboard", "unifi", "proxmox", "unraid"]);
+const EDITABLE_PAGES = new Set(["dashboard", "unifi", "proxmox", "pbs", "bmc", "unraid"]);
 
 /** Resolve the active page from the URL path, with legacy #hash fallback. */
 function resolvePage(): string {
@@ -391,6 +395,28 @@ function AppBody({
           editMode={editMode}
           layoutStore={settings.layouts}
           onLayoutChange={savePageLayout}
+        />
+      );
+      break;
+    case "pbs":
+      pageEl = (
+        <Pbs
+          snap={snap}
+          editMode={editMode}
+          layoutStore={settings.layouts}
+          onLayoutChange={savePageLayout}
+          onConfigure={() => navigate("settings", "sources")}
+        />
+      );
+      break;
+    case "bmc":
+      pageEl = (
+        <Bmc
+          snap={snap}
+          editMode={editMode}
+          layoutStore={settings.layouts}
+          onLayoutChange={savePageLayout}
+          onConfigure={() => navigate("settings", "sources")}
         />
       );
       break;

@@ -4,7 +4,7 @@ use chrono::{DateTime, Local};
 
 use crate::config::AlertThresholds;
 use crate::model::{Event, Guest, GuestCount, NodeGuests, NodeTile};
-use crate::proxmox::ProxmoxData;
+use crate::proxmox::{ProxmoxData, PveTask};
 
 use super::alerts::Candidate;
 use super::format::{fmt_mem, fmt_uptime, friendly_task, pct};
@@ -279,6 +279,7 @@ pub(super) fn process_proxmox(
             dedupe_key: Some(format!("proxmox:task:{}", t.upid)),
         });
     }
+    push_backup_alert_candidates(data, &mut cands);
     let _ = now;
 
     let guest_groups: Vec<NodeGuests> = tiles
@@ -304,9 +305,147 @@ pub(super) fn process_proxmox(
     }
 }
 
+fn push_backup_alert_candidates(data: &ProxmoxData, cands: &mut Vec<Candidate>) {
+    let mut latest_by_target: HashMap<String, &PveTask> = HashMap::new();
+    for task in &data.tasks {
+        if task.kind != "vzdump" || task.status.is_none() {
+            continue;
+        }
+        let target_key = backup_target_key(task);
+        let replace = latest_by_target
+            .get(&target_key)
+            .map(|current| task_timestamp(task) > task_timestamp(current))
+            .unwrap_or(true);
+        if replace {
+            latest_by_target.insert(target_key, task);
+        }
+    }
+
+    let mut latest: Vec<_> = latest_by_target.into_iter().collect();
+    latest.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+    for (target_key, task) in latest {
+        let Some(status) = task.status.as_deref() else {
+            continue;
+        };
+        if status == "OK" {
+            continue;
+        }
+
+        let target = backup_target_label(task);
+        cands.push(Candidate {
+            key: format!("pmx:{}:backup:{target_key}", data.server),
+            sev: "warn".to_string(),
+            source: "proxmox".to_string(),
+            host: format!("{} / {}", data.server, task.node),
+            target: target.clone(),
+            title: format!("{target} failed"),
+            desc: backup_failure_desc(task, &target, status),
+            rule: "latest_finished_backup.status != OK".to_string(),
+        });
+    }
+}
+
+fn backup_failure_desc(task: &PveTask, target: &str, status: &str) -> String {
+    let mut desc = format!(
+        "The latest Proxmox backup task for {target} on node {} ended with status: {status}.",
+        task.node
+    );
+    let excerpt = task_log_excerpt(task);
+    if excerpt.is_empty() {
+        desc.push_str("\n\nNo detailed Proxmox task log was available for this task.");
+    } else {
+        desc.push_str("\n\nMost relevant task log lines:");
+        for line in excerpt {
+            desc.push_str("\n- ");
+            desc.push_str(&line);
+        }
+    }
+    desc.push_str("\n\nTask: ");
+    desc.push_str(&task.upid);
+    desc
+}
+
+fn task_log_excerpt(task: &PveTask) -> Vec<String> {
+    let relevant: Vec<String> = task
+        .log
+        .iter()
+        .filter_map(|line| clean_log_line(line))
+        .filter(|line| is_relevant_backup_log_line(line))
+        .collect();
+    if !relevant.is_empty() {
+        return take_last(relevant, 8);
+    }
+    take_last(
+        task.log
+            .iter()
+            .filter_map(|line| clean_log_line(line))
+            .collect(),
+        8,
+    )
+}
+
+fn clean_log_line(line: &str) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    Some(line.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+fn is_relevant_backup_log_line(line: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    [
+        "error",
+        "warn",
+        "fail",
+        "unable",
+        "cannot",
+        "can't",
+        "no space",
+        "permission",
+        "denied",
+        "timeout",
+        "aborted",
+        "not found",
+    ]
+    .iter()
+    .any(|needle| line.contains(needle))
+}
+
+fn take_last(mut lines: Vec<String>, limit: usize) -> Vec<String> {
+    if lines.len() > limit {
+        lines.drain(0..lines.len() - limit);
+    }
+    lines
+}
+
+fn task_timestamp(task: &PveTask) -> i64 {
+    task.endtime.unwrap_or(task.starttime)
+}
+
+fn backup_target_key(task: &PveTask) -> String {
+    let id = task
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("job");
+    format!("{}:{id}", task.node)
+}
+
+fn backup_target_label(task: &PveTask) -> String {
+    task.id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|id| format!("Backup {id}"))
+        .unwrap_or_else(|| "Backup job".to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::proxmox::{ProxmoxData, PveResource};
+    use crate::proxmox::{ProxmoxData, PveResource, PveTask};
 
     use super::*;
 
@@ -328,6 +467,37 @@ mod tests {
             maxdisk: 0,
             uptime: 0,
         }
+    }
+
+    fn task(kind: &str, node: &str, id: &str, status: Option<&str>, endtime: i64) -> PveTask {
+        PveTask {
+            upid: format!("UPID:{node}:{kind}:{id}:{endtime}"),
+            kind: kind.to_string(),
+            status: status.map(str::to_string),
+            node: node.to_string(),
+            user: Some("root@pam".to_string()),
+            id: if id.is_empty() {
+                None
+            } else {
+                Some(id.to_string())
+            },
+            starttime: endtime - 60,
+            endtime: Some(endtime),
+            log: Vec::new(),
+        }
+    }
+
+    fn task_with_log(
+        kind: &str,
+        node: &str,
+        id: &str,
+        status: Option<&str>,
+        endtime: i64,
+        log: &[&str],
+    ) -> PveTask {
+        let mut task = task(kind, node, id, status, endtime);
+        task.log = log.iter().map(|line| line.to_string()).collect();
+        task
     }
 
     #[test]
@@ -360,5 +530,86 @@ mod tests {
             .candidates
             .iter()
             .any(|c| c.key == "pmx:cluster:pve1:100:mem" && c.sev == "crit"));
+    }
+
+    #[test]
+    fn failed_backup_generates_warning_candidate() {
+        let data = ProxmoxData {
+            server: "cluster".to_string(),
+            release: "8.2".to_string(),
+            resources: Vec::new(),
+            cluster_status: Vec::new(),
+            node_rrd: HashMap::new(),
+            tasks: vec![task("vzdump", "pve1", "100", Some("ERROR"), 1_000)],
+        };
+
+        let processed = process_proxmox(&data, 1_010, &AlertThresholds::default());
+
+        let backup = processed
+            .candidates
+            .iter()
+            .find(|c| c.key == "pmx:cluster:backup:pve1:100")
+            .expect("failed backup should create an alert candidate");
+        assert_eq!(backup.sev, "warn");
+        assert_eq!(backup.target, "Backup 100");
+    }
+
+    #[test]
+    fn failed_backup_candidate_includes_relevant_task_log_lines() {
+        let data = ProxmoxData {
+            server: "cluster".to_string(),
+            release: "8.2".to_string(),
+            resources: Vec::new(),
+            cluster_status: Vec::new(),
+            node_rrd: HashMap::new(),
+            tasks: vec![task_with_log(
+                "vzdump",
+                "pve1",
+                "",
+                Some("WARNINGS: 1"),
+                1_000,
+                &[
+                    "INFO: starting new backup job",
+                    "INFO: backup mode: snapshot",
+                    "WARN: failed to prune old backup snapshots: permission denied",
+                    "INFO: Backup job finished with warnings",
+                ],
+            )],
+        };
+
+        let processed = process_proxmox(&data, 1_010, &AlertThresholds::default());
+
+        let backup = processed
+            .candidates
+            .iter()
+            .find(|c| c.key == "pmx:cluster:backup:pve1:job")
+            .expect("failed backup should create an alert candidate");
+        assert!(backup.desc.contains("WARNINGS: 1"));
+        assert!(backup.desc.contains("Most relevant task log lines"));
+        assert!(backup.desc.contains("permission denied"));
+        assert!(backup.desc.contains("Backup job finished with warnings"));
+        assert!(backup.desc.contains("UPID:pve1:vzdump::1000"));
+    }
+
+    #[test]
+    fn newer_successful_backup_clears_failure_candidate() {
+        let data = ProxmoxData {
+            server: "cluster".to_string(),
+            release: "8.2".to_string(),
+            resources: Vec::new(),
+            cluster_status: Vec::new(),
+            node_rrd: HashMap::new(),
+            tasks: vec![
+                task("vzdump", "pve1", "100", Some("ERROR"), 1_000),
+                task("vzdump", "pve1", "100", Some("OK"), 1_100),
+            ],
+        };
+
+        let processed = process_proxmox(&data, 1_110, &AlertThresholds::default());
+
+        assert!(!processed
+            .candidates
+            .iter()
+            .any(|c| c.key == "pmx:cluster:backup:pve1:100"));
     }
 }

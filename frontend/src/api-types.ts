@@ -301,6 +301,18 @@ export interface Alert {
   rule: string;
 }
 
+export interface PbsDatastore { source: string; store: string; used: string; total: string; avail: string; usedPct: number; groups: number; snapshots: number; status: string; gcStatus: string; maintenanceMode: string; }
+export interface PbsBackup { id: string; source: string; namespace: string; backupType: string; backupId: string; guestName: string; guestNode: string; guestServer: string; backupTime: string; ageMin: number; size: string; sizeBytes: number; verification: string; protected: boolean; owner: string; }
+export interface PbsTask { id: string; source: string; workerType: string; workerId: string; status: string; startTime: string; ageMin: number; durationSec: number | null; user: string; ok: boolean; }
+export interface PbsCoverageFinding { id: string; tone: string; kind: string; title: string; detail: string; guestId: number; guestType: string; guestName: string; namespace: string; ageMin: number | null; }
+export interface PbsCoverage { protected: number; missing: number; stale: number; orphaned: number; findings: PbsCoverageFinding[]; }
+export interface PbsView { kpis: Kpi[]; datastores: PbsDatastore[]; recentBackups: PbsBackup[]; recentTasks: PbsTask[]; coverage: PbsCoverage; latestBackupAgeMin: number | null; failedTasks24h: number; }
+
+export interface BmcController { name: string; host: string; manufacturer: string; model: string; serial: string; biosVersion: string; powerState: string; health: string; processorCount: number; memoryGib: number; managerModel: string; managerFirmware: string; managerUuid: string; ipmiAvailable: boolean; ipmiPower: string; ipmiManufacturer: string; ipmiProduct: string; ipmiFirmware: string; ipmiVersion: string; }
+export interface BmcSensor { source: string; name: string; kind: string; status: string; reading: number | null; unit: string; raw: string; tone: string; }
+export interface BmcDrive { source: string; name: string; manufacturer: string; model: string; serial: string; capacity: string; health: string; state: string; tone: string; }
+export interface BmcView { kpis: Kpi[]; controllers: BmcController[]; sensors: BmcSensor[]; drives: BmcDrive[]; }
+
 export interface AlertsView {
   kpis: Kpi[];
   alerts: Alert[];
@@ -331,6 +343,8 @@ export interface Snapshot {
   proxmox: ProxmoxView;
   unifi: UnifiView;
   unraid: UnraidView;
+  pbs: PbsView;
+  bmc: BmcView;
   topology: TopoNode;
   alerts: AlertsView;
   events: EventsView;
@@ -617,6 +631,16 @@ export interface ProxmoxSource {
   enabled: boolean;
 }
 
+export interface PbsSource {
+  id: number;
+  name: string;
+  host: string;
+  tokenId: string;
+  /** True if a token secret is stored. */
+  hasSecret: boolean;
+  enabled: boolean;
+}
+
 export interface UnraidSource {
   id: number;
   name: string;
@@ -626,9 +650,21 @@ export interface UnraidSource {
   enabled: boolean;
 }
 
+export interface BmcSource {
+  id: number;
+  name: string;
+  host: string;
+  username: string;
+  /** True if a password is stored — the password itself is never sent to the UI. */
+  hasSecret: boolean;
+  enabled: boolean;
+}
+
 export interface SourcesData {
   unifi: UnifiSource[];
   proxmox: ProxmoxSource[];
+  pbs: PbsSource[];
+  bmc: BmcSource[];
   unraid: UnraidSource[];
 }
 

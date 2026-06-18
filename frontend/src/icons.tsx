@@ -42,6 +42,8 @@ const UI_ICONS: Record<string, LucideIcon> = {
   network: Network,
   server: Server,
   storage: Database,
+  pbs: Database,
+  bmc: Server,
   alert: TriangleAlert,
   info: Info,
   logs: Logs,

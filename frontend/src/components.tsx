@@ -33,6 +33,8 @@ export function Sidebar({
     { id: "unifi", label: "UniFi Network", icon: "unifi" },
     { id: "network-scanner", label: "Network Scanner", icon: "scan" },
     { id: "proxmox", label: "Proxmox", icon: "proxmox" },
+    { id: "pbs", label: "PBS", icon: "pbs" },
+    { id: "bmc", label: "IPMI / Redfish", icon: "bmc" },
     { id: "unraid", label: "Unraid", icon: "unraid" },
   ];
   const utilities = [
